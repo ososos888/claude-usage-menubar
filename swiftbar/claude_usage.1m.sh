@@ -19,12 +19,12 @@ if [[ ! -f "$F" ]]; then
   exit 0
 fi
 
-# Color by threshold: 80%+ red, 60-79% orange
+# Color by threshold: 90%+ red, 70-89% orange
 color_for() {
   local p="$1"
   [[ "$p" =~ ^[0-9]+$ ]] || { echo ""; return; }
-  if   (( p >= 80 )); then echo "red"
-  elif (( p >= 60 )); then echo "orange"
+  if   (( p >= 90 )); then echo "red"
+  elif (( p >= 70 )); then echo "orange"
   else echo ""; fi
 }
 colorpipe() { local c; c="$(color_for "$1")"; [[ -n "$c" ]] && echo "color=$c"; }

@@ -62,8 +62,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func color(forPct p: Int?) -> NSColor? {
         guard let p = p else { return nil }
-        if p >= 80 { return .systemRed }
-        if p >= 60 { return .systemOrange }
+        if p >= 90 { return .systemRed }
+        if p >= 70 { return .systemOrange }
         return nil
     }
 
