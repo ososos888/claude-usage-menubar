@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # <swiftbar.title>Claude Usage</swiftbar.title>
-# <swiftbar.version>1.0</swiftbar.version>
-# <swiftbar.desc>Claude 구독 사용량(세션/주간)을 메뉴바에 표시</swiftbar.desc>
+# <swiftbar.version>1.0.0</swiftbar.version>
+# <swiftbar.desc>Show Claude subscription usage (session/weekly) in the menu bar</swiftbar.desc>
 # <swiftbar.hideRunInTerminal>true</swiftbar.hideRunInTerminal>
 # <swiftbar.hideLastUpdated>true</swiftbar.hideLastUpdated>
 #
-# 캐시 파일(~/.claude-usage/usage.json)만 읽으므로 가볍고 즉각적이다.
-# 데이터는 launchd 데몬(collect.sh)이 5분마다 갱신한다.
+# Reads only the cache file (~/.claude-usage/usage.json), so it is light and instant.
+# The data is refreshed by the launchd daemon (collect.sh) every minute.
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 F="$HOME/.claude-usage/usage.json"
@@ -14,12 +14,12 @@ F="$HOME/.claude-usage/usage.json"
 if [[ ! -f "$F" ]]; then
   echo "-- %"
   echo "---"
-  echo "데이터 없음 (데몬 미실행?) | color=red"
-  echo "collect.sh 지금 실행 | bash='$HOME/.claude-usage/collect.sh' terminal=false refresh=true"
+  echo "No data (daemon not running?) | color=red"
+  echo "Run collect.sh now | bash='$HOME/.claude-usage/collect.sh' terminal=false refresh=true"
   exit 0
 fi
 
-# 임계값에 따른 색상: 80%+ 빨강, 60~79% 주황
+# Color by threshold: 80%+ red, 60-79% orange
 color_for() {
   local p="$1"
   [[ "$p" =~ ^[0-9]+$ ]] || { echo ""; return; }
@@ -29,10 +29,10 @@ color_for() {
 }
 colorpipe() { local c; c="$(color_for "$1")"; [[ -n "$c" ]] && echo "color=$c"; }
 
-# 리셋 시각 문자열 -> 남은 시간.
-#   입력 예: "Jul 21 at 6:40pm (Asia/Seoul)"  또는 "Jul 26 at 4am (Asia/Seoul)"
-#   style=long  -> "3시간 25분 남음" / "2일 4시간 남음"
-#   style=short -> "3h25m" / "2d4h"  (메뉴바용)
+# Reset-time string -> remaining time.
+#   Input e.g.: "Jul 21 at 6:40pm (Asia/Seoul)" or "Jul 26 at 4am (Asia/Seoul)"
+#   style=long  -> "3h 25m left" / "2d 4h left"
+#   style=short -> "3h25m" / "2d4h"  (for the menu bar)
 remaining() {
   local s="$1" style="${2:-long}"
   [[ -n "$s" && "$s" != "?" ]] || { echo ""; return; }
@@ -41,29 +41,29 @@ remaining() {
     tz="${BASH_REMATCH[1]}"
     body="$(printf '%s' "$s" | sed 's/ *([^)]*)[[:space:]]*$//')"
   fi
-  # 시각에 분이 있으면 %I:%M%p, 없으면 %I%p
+  # Use %I:%M%p if the time has minutes, otherwise %I%p
   local fmt; [[ "$body" == *:* ]] && fmt="%b %d at %I:%M%p %Y" || fmt="%b %d at %I%p %Y"
-  # 시스템 로케일(ko_KR)에선 %b(Jul)를 못 읽으므로 LC_ALL=C 고정
+  # The system locale (ko_KR) can't read %b (Jul), so force LC_ALL=C
   local dpfx=(env LC_ALL=C); [[ -n "$tz" ]] && dpfx+=(TZ="$tz")
   local yr epoch now
   yr="$("${dpfx[@]}" date +%Y)"
   epoch="$("${dpfx[@]}" date -j -f "$fmt" "$body $yr" +%s 2>/dev/null)" || { echo ""; return; }
   now="$(date +%s)"
-  # 연말 경계: 파싱값이 과거면 내년으로 재계산
+  # Year boundary: if the parsed value is in the past, recompute for next year
   if (( epoch < now )); then
     epoch="$("${dpfx[@]}" date -j -f "$fmt" "$body $((yr+1))" +%s 2>/dev/null)" || { echo ""; return; }
   fi
   local diff=$(( epoch - now ))
-  (( diff <= 0 )) && { echo "곧 리셋"; return; }
+  (( diff <= 0 )) && { echo "resets soon"; return; }
   local d=$(( diff/86400 )) h=$(( (diff%86400)/3600 )) m=$(( (diff%3600)/60 ))
   if [[ "$style" == short ]]; then
     if   (( d > 0 )); then echo "${d}d${h}h"
     elif (( h > 0 )); then echo "${h}h${m}m"
     else echo "${m}m"; fi
   else
-    if   (( d > 0 )); then echo "${d}일 ${h}시간 남음"
-    elif (( h > 0 )); then echo "${h}시간 ${m}분 남음"
-    else echo "${m}분 남음"; fi
+    if   (( d > 0 )); then echo "${d}d ${h}h left"
+    elif (( h > 0 )); then echo "${h}h ${m}m left"
+    else echo "${m}m left"; fi
   fi
 }
 
@@ -76,12 +76,12 @@ MP=$(jq -r '.weekly_model_pct   // "-"' "$F")
 ERR=$(jq -r '.error // ""' "$F")
 CA=$(jq -r '.collected_at // "?"' "$F")
 
-# 리셋까지 남은 시간 계산
-SREM="$(remaining "$SR" long)"    # 세션(일일) 남은시간, 드롭다운용
-SREMC="$(remaining "$SR" short)"  # 세션 남은시간, 메뉴바 압축표기
-WREM="$(remaining "$WR" long)"    # 주간 남은시간
+# Compute remaining time until reset
+SREM="$(remaining "$SR" long)"    # session remaining, for the dropdown
+SREMC="$(remaining "$SR" short)"  # session remaining, compact for the menu bar
+WREM="$(remaining "$WR" long)"    # weekly remaining
 
-# 메뉴바 한 줄 (세션 % 기준으로 색상). s=세션(5시간 롤링), w=주간
+# Menu bar line (colored by session %). s = session (5-hour rolling), w = weekly
 BAR="s${S}% · w${W}%"
 [[ -n "$SREMC" ]] && BAR="$BAR · ⏳${SREMC}"
 BARCOLOR="$(color_for "$S")"
@@ -92,11 +92,11 @@ else
 fi
 
 echo "---"
-[[ -n "$ERR" ]] && echo "⚠️ 마지막 수집 실패: $ERR (아래는 마지막 성공값) | color=red"
-echo "세션: ${S}% 사용 · ${SREM:-리셋 $SR} $([[ -n "$SREM" ]] && echo "(리셋 $SR)") | $(colorpipe "$S")"
-echo "주간(전체): ${W}% 사용 · ${WREM:-리셋 $WR} $([[ -n "$WREM" ]] && echo "(리셋 $WR)") | $(colorpipe "$W")"
-echo "주간(${ML}): ${MP}%"
+[[ -n "$ERR" ]] && echo "⚠️ Last update failed: $ERR (showing last good values) | color=red"
+echo "Session: ${S}% used · ${SREM:-resets $SR} $([[ -n "$SREM" ]] && echo "(resets $SR)") | $(colorpipe "$S")"
+echo "Weekly (all models): ${W}% used · ${WREM:-resets $WR} $([[ -n "$WREM" ]] && echo "(resets $WR)") | $(colorpipe "$W")"
+echo "Weekly (${ML}): ${MP}%"
 echo "---"
-echo "갱신: ${CA}"
-echo "지금 새로고침 | bash='$HOME/.claude-usage/collect.sh' terminal=false refresh=true"
-echo "Claude 앱 Usage 열기 | href=https://claude.ai/settings/usage"
+echo "Updated: ${CA}"
+echo "Refresh now | bash='$HOME/.claude-usage/collect.sh' terminal=false refresh=true"
+echo "Open Claude usage page | href=https://claude.ai/settings/usage"

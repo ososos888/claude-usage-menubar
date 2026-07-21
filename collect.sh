@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Claude 사용량 수집 데몬.
-# 경로 A (STEP 0에서 확정): `claude -p "/usage" --output-format json` 의 .result 텍스트를 파싱.
-#   - num_turns=0, total_cost_usd=0 → 모델 호출 없이 슬래시 명령이 직접 처리되어 사용량 소모가 없다.
-# 실제 .result 형식 (2026-07, claude 2.1.216):
+# Claude usage collector daemon.
+# Data path A: parse the .result text of `claude -p "/usage" --output-format json`.
+#   - num_turns=0, total_cost_usd=0 -> the slash command is handled locally with no
+#     model call, so collecting costs zero tokens/usage.
+# Actual .result format (2026-07, claude 2.1.216):
 #   You are currently using your subscription to power your Claude Code usage
 #
 #   Current session: 9% used · resets Jul 21 at 6:40pm (Asia/Seoul)
 #   Current week (all models): 24% used · resets Jul 26 at 4am (Asia/Seoul)
-#   Current week (Fable): 0% used        <- 모델 라벨은 동적(Opus/Fable 등), reset 없을 수 있음
+#   Current week (Fable): 0% used        <- model label is dynamic (Opus/Fable/...), reset may be absent
 set -uo pipefail
 
 DIR="$HOME/.claude-usage"
@@ -17,13 +18,14 @@ CLAUDE_BIN="${CLAUDE_BIN:-$HOME/.local/bin/claude}"
 [[ -x "$CLAUDE_BIN" ]] || CLAUDE_BIN="$(command -v claude || echo claude)"
 
 mkdir -p "$DIR"
-# launchd 는 작업 디렉토리가 '/' 라, 여기서 claude 를 띄우면 /Volumes(네트워크 마운트 포함)를
-# 스캔하며 macOS 권한 프롬프트("네트워크 볼륨 접근")가 뜬다. 로컬 폴더로 고정해 방지.
+# launchd runs with the working directory set to '/'. Launching claude from there makes it
+# scan /Volumes (including network mounts), triggering a macOS "network volume access" prompt.
+# Pin to a local directory to avoid it.
 cd "$DIR" 2>/dev/null || cd "$HOME" || true
 
-# 리셋 시각 문자열 -> epoch(초). 실패 시 빈 문자열.
-#   입력 예: "Jul 21 at 6:40pm (Asia/Seoul)" / "Jul 26 at 4am (Asia/Seoul)"
-#   ko_KR 로케일에선 %b(Jul)를 못 읽으므로 LC_ALL=C 고정.
+# Reset-time string -> epoch (seconds). Empty string on failure.
+#   Input e.g.: "Jul 21 at 6:40pm (Asia/Seoul)" / "Jul 26 at 4am (Asia/Seoul)"
+#   The ko_KR locale can't read %b (Jul), so force LC_ALL=C.
 to_epoch() {
   local s="$1" tz="" body fmt yr ep now
   [[ -n "$s" ]] || { echo ""; return; }
@@ -39,7 +41,7 @@ to_epoch() {
 }
 
 fail() {
-  # 수집/파싱 실패: 마지막 성공값을 유지하고 에러 플래그만 갱신.
+  # Collection/parse failed: keep the last successful values, only refresh the error flag.
   local reason="$1"
   if [[ -f "$OUT" ]]; then
     jq --arg r "$reason" --arg t "$(date -u +%FT%TZ)" \
@@ -52,16 +54,16 @@ fail() {
   exit 0
 }
 
-# 원시 출력 수집 (stdout만; stderr 분리해 JSON 오염 방지)
+# Collect raw output (stdout only; keep stderr separate so it can't corrupt the JSON).
 RAW="$("$CLAUDE_BIN" -p "/usage" --output-format json 2>/dev/null < /dev/null || true)"
 [[ -n "$RAW" ]] || fail "no_output"
 
-# ANSI 이스케이프 제거 후 .result 텍스트 추출
+# Strip ANSI escapes, then extract the .result text.
 CLEAN="$(printf '%s' "$RAW" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g')"
 TEXT="$(printf '%s' "$CLEAN" | jq -r '.result // empty' 2>/dev/null)"
 [[ -n "$TEXT" ]] || fail "parse_result_failed"
 
-# 필드 추출
+# Extract fields.
 S_PCT="$(printf '%s\n' "$TEXT"   | sed -n 's/^Current session: \([0-9]*\)% used.*$/\1/p' | head -1)"
 S_RESET="$(printf '%s\n' "$TEXT" | sed -n 's/^Current session: [0-9]*% used · resets \(.*\)$/\1/p' | head -1)"
 W_PCT="$(printf '%s\n' "$TEXT"   | sed -n 's/^Current week (all models): \([0-9]*\)% used.*$/\1/p' | head -1)"
@@ -70,10 +72,10 @@ M_LINE="$(printf '%s\n' "$TEXT"  | grep 'Current week' | grep -v 'all models' | 
 M_LABEL="$(printf '%s\n' "$M_LINE" | sed -n 's/^Current week (\([^)]*\)):.*$/\1/p')"
 M_PCT="$(printf '%s\n' "$M_LINE"   | sed -n 's/^Current week ([^)]*): \([0-9]*\)% used.*$/\1/p')"
 
-# 세션/주간 수치 둘 다 없으면 실패로 간주(형식 변경 감지)
+# If neither session nor weekly number is present, treat it as failure (format change detector).
 [[ -n "$S_PCT" || -n "$W_PCT" ]] || fail "no_numbers"
 
-# 리셋 시각을 절대시각(epoch)으로도 저장 → 앱이 남은시간을 실시간 계산
+# Also store reset times as absolute epochs so the app can compute remaining time live.
 S_EPOCH="$(to_epoch "$S_RESET")"
 W_EPOCH="$(to_epoch "$W_RESET")"
 

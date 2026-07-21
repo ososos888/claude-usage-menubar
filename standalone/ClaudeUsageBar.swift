@@ -1,6 +1,7 @@
-// ClaudeUsageBar — SwiftBar 없이 동작하는 단일 네이티브 메뉴바 앱.
-// ~/.claude-usage/usage.json (launchd 데몬 collect.sh 가 갱신) 만 읽어 메뉴바에 표시한다.
-// 로컬 파일만 읽으므로 macOS 권한 프롬프트가 사실상 발생하지 않는다.
+// ClaudeUsageBar — a single native menu bar app that works without SwiftBar.
+// It only reads ~/.claude-usage/usage.json (refreshed by the launchd daemon collect.sh)
+// and renders it in the menu bar. Reading a local file only, it triggers virtually no
+// macOS permission prompts.
 import Cocoa
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -22,7 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         statusItem.menu = menu
         refresh()
-        // 30초마다 파일 재로드 + 남은시간 재계산 (⏳ 분 단위 카운트다운)
+        // Reload the file + recompute remaining time every 30s (keeps the ⏳ minute fresh).
         let t = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in self?.refresh() }
         RunLoop.main.add(t, forMode: .common)
         timer = t
@@ -46,16 +47,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func remaining(_ epoch: Double?, short: Bool) -> String? {
         guard let e = epoch else { return nil }
         let diff = Int(e - Date().timeIntervalSince1970)
-        if diff <= 0 { return short ? "0m" : "곧 리셋" }
+        if diff <= 0 { return short ? "0m" : "resets soon" }
         let d = diff / 86400, h = (diff % 86400) / 3600, m = (diff % 3600) / 60
         if short {
             if d > 0 { return "\(d)d\(h)h" }
             if h > 0 { return "\(h)h\(m)m" }
             return "\(m)m"
         } else {
-            if d > 0 { return "\(d)일 \(h)시간 남음" }
-            if h > 0 { return "\(h)시간 \(m)분 남음" }
-            return "\(m)분 남음"
+            if d > 0 { return "\(d)d \(h)h left" }
+            if h > 0 { return "\(h)h \(m)m left" }
+            return "\(m)m left"
         }
     }
 
@@ -75,7 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let s = u.sessionPct.map(String.init) ?? "?"
         let w = u.weeklyPct.map(String.init) ?? "?"
-        var title = "s\(s)% · w\(w)%"  // s=세션(5시간 롤링), w=주간
+        var title = "s\(s)% · w\(w)%"  // s = session (5-hour rolling), w = weekly
         if let rem = remaining(u.sessionEpoch, short: true) { title += " · ⏳\(rem)" }
         setTitle(title, color: color(forPct: u.sessionPct))
         rebuildMenu(u)
@@ -97,23 +98,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(it)
         }
         if let u = u {
-            if let err = u.error { info("⚠️ 마지막 수집 실패: \(err) (아래는 마지막 성공값)") }
+            if let err = u.error { info("⚠️ Last update failed: \(err) (showing last good values)") }
             let s = u.sessionPct.map(String.init) ?? "?"
-            let sRem = remaining(u.sessionEpoch, short: false) ?? "리셋 \(u.sessionReset ?? "?")"
-            info("세션: \(s)% 사용 · \(sRem)")
+            let sRem = remaining(u.sessionEpoch, short: false) ?? "resets \(u.sessionReset ?? "?")"
+            info("Session: \(s)% used · \(sRem)")
             let w = u.weeklyPct.map(String.init) ?? "?"
-            let wRem = remaining(u.weeklyEpoch, short: false) ?? "리셋 \(u.weeklyReset ?? "?")"
-            info("주간(전체): \(w)% 사용 · \(wRem)")
-            if let ml = u.modelLabel, let mp = u.modelPct { info("주간(\(ml)): \(mp)%") }
+            let wRem = remaining(u.weeklyEpoch, short: false) ?? "resets \(u.weeklyReset ?? "?")"
+            info("Weekly (all models): \(w)% used · \(wRem)")
+            if let ml = u.modelLabel, let mp = u.modelPct { info("Weekly (\(ml)): \(mp)%") }
             menu.addItem(.separator())
-            info("갱신: \(u.collectedAt ?? "?")")
+            info("Updated: \(u.collectedAt ?? "?")")
         } else {
-            info("데이터 없음 (데몬 미실행?)")
+            info("No data (daemon not running?)")
         }
-        add(menu, "지금 새로고침", #selector(refreshNow), key: "r")
-        add(menu, "Claude 사용량 페이지 열기", #selector(openUsage), key: "")
+        add(menu, "Refresh now", #selector(refreshNow), key: "r")
+        add(menu, "Open usage page", #selector(openUsage), key: "")
         menu.addItem(.separator())
-        add(menu, "종료", #selector(quit), key: "q")
+        add(menu, "Quit", #selector(quit), key: "q")
     }
 
     private func add(_ menu: NSMenu, _ title: String, _ sel: Selector, key: String) {
@@ -138,7 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 }
 
 let app = NSApplication.shared
-app.setActivationPolicy(.accessory) // Dock 아이콘 없이 메뉴바에만 표시
+app.setActivationPolicy(.accessory) // Menu-bar only, no Dock icon
 let delegate = AppDelegate()
 app.delegate = delegate
 app.run()
