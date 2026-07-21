@@ -4,6 +4,13 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- README preview figure (`docs/preview.svg`) showing the menu bar item and dropdown.
+- `uninstall.sh`: guarded uninstaller (path guards, confirmation prompt, `--dry-run`
+  and `-y` flags) that removes only what this project installs; never touches SwiftBar.
+
 ## [1.0.0] - 2026-07-21
 
 ### Added

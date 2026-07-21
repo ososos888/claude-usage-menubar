@@ -2,6 +2,10 @@
 
 A tiny native macOS menu bar app that always shows your Claude subscription (Pro/Max/Team) usage. No more opening Settings → Usage every time — see your session/weekly usage and the time left until reset at a glance.
 
+<p align="center">
+  <img src="docs/preview.svg" width="560" alt="Menu bar showing 's14% · w25% · ⏳3h58m' with an open dropdown listing session, weekly, and actions">
+</p>
+
 ```
 s14% · w25% · ⏳3h58m
 ```
@@ -58,6 +62,7 @@ cd claude-usage-menubar
 | `com.user.claude-usage.plist` | launchd agent. Runs `collect.sh` every minute; starts at login |
 | `standalone/ClaudeUsageBar.swift` | Native menu bar app source (`NSStatusItem`). Reads the cache JSON, renders it, computes remaining time live |
 | `standalone/build.sh` | Builds the app → `~/Applications/ClaudeUsageBar.app` → registers launchd auto-start |
+| `uninstall.sh` | Removes the agents, app, and data dir (guarded; supports `--dry-run` / `-y`) |
 | `swiftbar/claude_usage.1m.sh` | (Optional) plugin alternative if you prefer SwiftBar |
 
 ## Customizing
@@ -69,6 +74,14 @@ cd claude-usage-menubar
 After editing, run `./standalone/build.sh` to rebuild and apply immediately.
 
 ## Uninstall
+
+```bash
+./uninstall.sh              # asks for confirmation, then removes everything
+./uninstall.sh --dry-run    # show exactly what would be removed, change nothing
+./uninstall.sh -y           # skip the confirmation prompt
+```
+
+It removes only what this project creates — the two launchd agents, `~/Applications/ClaudeUsageBar.app`, and `~/.claude-usage` — and never touches SwiftBar. Prefer to do it by hand? The equivalent commands:
 
 ```bash
 launchctl unload ~/Library/LaunchAgents/com.ososos888.claudeusagebar.plist
