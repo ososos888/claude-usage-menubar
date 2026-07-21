@@ -69,7 +69,7 @@ cd claude-usage-menubar
 
 - **Collection interval**: `StartInterval` (seconds) in `com.user.claude-usage.plist`. Default 60.
 - **Display refresh**: the `Timer` interval in `ClaudeUsageBar.swift` (default 30s).
-- **Color thresholds**: `color(forPct:)` in `ClaudeUsageBar.swift` — the menu bar text is colored by session %: 90%+ red, 70%+ orange.
+- **Color thresholds**: `color(forPct:)` in `ClaudeUsageBar.swift` — the menu bar text is colored by session %: 80%+ red, 60%+ orange.
 
 After editing, run `./standalone/build.sh` to rebuild and apply immediately.
 
