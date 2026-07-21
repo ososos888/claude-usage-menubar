@@ -81,8 +81,8 @@ SREM="$(remaining "$SR" long)"    # 세션(일일) 남은시간, 드롭다운용
 SREMC="$(remaining "$SR" short)"  # 세션 남은시간, 메뉴바 압축표기
 WREM="$(remaining "$WR" long)"    # 주간 남은시간
 
-# 메뉴바 한 줄 (세션 % 기준으로 색상). d=세션(일일), w=주간
-BAR="d${S}% · w${W}%"
+# 메뉴바 한 줄 (세션 % 기준으로 색상). s=세션(5시간 롤링), w=주간
+BAR="s${S}% · w${W}%"
 [[ -n "$SREMC" ]] && BAR="$BAR · ⏳${SREMC}"
 BARCOLOR="$(color_for "$S")"
 if [[ -n "$BARCOLOR" ]]; then

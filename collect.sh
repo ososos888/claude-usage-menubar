@@ -21,6 +21,23 @@ mkdir -p "$DIR"
 # 스캔하며 macOS 권한 프롬프트("네트워크 볼륨 접근")가 뜬다. 로컬 폴더로 고정해 방지.
 cd "$DIR" 2>/dev/null || cd "$HOME" || true
 
+# 리셋 시각 문자열 -> epoch(초). 실패 시 빈 문자열.
+#   입력 예: "Jul 21 at 6:40pm (Asia/Seoul)" / "Jul 26 at 4am (Asia/Seoul)"
+#   ko_KR 로케일에선 %b(Jul)를 못 읽으므로 LC_ALL=C 고정.
+to_epoch() {
+  local s="$1" tz="" body fmt yr ep now
+  [[ -n "$s" ]] || { echo ""; return; }
+  [[ "$s" =~ \(([^\)]+)\)[[:space:]]*$ ]] && tz="${BASH_REMATCH[1]}"
+  body="$(printf '%s' "$s" | sed 's/ *([^)]*)[[:space:]]*$//')"
+  [[ "$body" == *:* ]] && fmt="%b %d at %I:%M%p %Y" || fmt="%b %d at %I%p %Y"
+  local pfx=(env LC_ALL=C); [[ -n "$tz" ]] && pfx+=(TZ="$tz")
+  yr="$("${pfx[@]}" date +%Y)"
+  ep="$("${pfx[@]}" date -j -f "$fmt" "$body $yr" +%s 2>/dev/null)" || { echo ""; return; }
+  now="$(date +%s)"
+  (( ep < now )) && ep="$("${pfx[@]}" date -j -f "$fmt" "$body $((yr+1))" +%s 2>/dev/null)"
+  echo "${ep:-}"
+}
+
 fail() {
   # 수집/파싱 실패: 마지막 성공값을 유지하고 에러 플래그만 갱신.
   local reason="$1"
@@ -56,24 +73,32 @@ M_PCT="$(printf '%s\n' "$M_LINE"   | sed -n 's/^Current week ([^)]*): \([0-9]*\)
 # 세션/주간 수치 둘 다 없으면 실패로 간주(형식 변경 감지)
 [[ -n "$S_PCT" || -n "$W_PCT" ]] || fail "no_numbers"
 
+# 리셋 시각을 절대시각(epoch)으로도 저장 → 앱이 남은시간을 실시간 계산
+S_EPOCH="$(to_epoch "$S_RESET")"
+W_EPOCH="$(to_epoch "$W_RESET")"
+
 jq -n \
   --argjson s_pct   "${S_PCT:-null}" \
   --arg     s_reset "${S_RESET:-}" \
+  --argjson s_epoch "${S_EPOCH:-null}" \
   --argjson w_pct   "${W_PCT:-null}" \
   --arg     w_reset "${W_RESET:-}" \
+  --argjson w_epoch "${W_EPOCH:-null}" \
   --arg     m_label "${M_LABEL:-}" \
   --argjson m_pct   "${M_PCT:-null}" \
   --arg     ts      "$(date -u +%FT%TZ)" \
   '{
-     session_pct:      $s_pct,
-     session_reset:    ($s_reset  | select(. != "")),
-     weekly_all_pct:   $w_pct,
-     weekly_all_reset: ($w_reset  | select(. != "")),
-     weekly_model_label: ($m_label | select(. != "")),
-     weekly_model_pct: $m_pct,
-     error:            null,
-     collected_at:     $ts,
-     checked_at:       $ts
+     session_pct:            $s_pct,
+     session_reset:          ($s_reset  | select(. != "")),
+     session_reset_epoch:    $s_epoch,
+     weekly_all_pct:         $w_pct,
+     weekly_all_reset:       ($w_reset  | select(. != "")),
+     weekly_all_reset_epoch: $w_epoch,
+     weekly_model_label:     ($m_label | select(. != "")),
+     weekly_model_pct:       $m_pct,
+     error:                  null,
+     collected_at:           $ts,
+     checked_at:             $ts
    }' > "$TMP" 2>/dev/null || fail "encode_failed"
 
 mv "$TMP" "$OUT"
