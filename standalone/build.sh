@@ -6,7 +6,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APPNAME="ClaudeUsageBar"
 BUNDLE_ID="com.ososos888.claudeusagebar"
-VERSION="1.2.0"
+VERSION="1.2.1"
 APPDIR="$HOME/Applications/$APPNAME.app"
 PLIST="$HOME/Library/LaunchAgents/$BUNDLE_ID.plist"
 

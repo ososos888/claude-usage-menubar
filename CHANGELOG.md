@@ -4,6 +4,13 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.1] - 2026-07-22
+
+### Fixed
+- Reset notification no longer false-fires. It keyed off any drop in session %, but a
+  rolling 5-hour window's % dips on its own as old usage ages out. It now triggers only
+  when the session reset time advances to a new window.
+
 ## [1.2.0] - 2026-07-22
 
 ### Added
@@ -65,6 +72,7 @@ All notable changes to this project are documented here. This project adheres to
 - Color thresholds in the menu bar (80%+ red, 60%+ orange).
 - Optional SwiftBar plugin (`swiftbar/claude_usage.1m.sh`) for users who prefer SwiftBar.
 
+[1.2.1]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.2.1
 [1.2.0]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.2.0
 [1.1.0]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.1.0
 [1.0.0]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.0.0

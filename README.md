@@ -112,7 +112,7 @@ rm -rf ~/Applications/ClaudeUsageBar.app ~/.claude-usage
 
 ## Versioning
 
-This project follows [Semantic Versioning](https://semver.org/). See [CHANGELOG.md](CHANGELOG.md). Current version: **1.2.0**.
+This project follows [Semantic Versioning](https://semver.org/). See [CHANGELOG.md](CHANGELOG.md). Current version: **1.2.1**.
 
 ## License
 

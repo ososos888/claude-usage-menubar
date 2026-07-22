@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var spinFrame = 0
     private var prevSession: Int?                // last shown session % (for change detection)
     private var prevWeekly: Int?                 // last shown weekly %
+    private var prevSessionEpoch: Double?        // last seen session reset time (for reset detection)
     private var flipTimer: Timer?                // one-off hourglass flip on manual refresh
     private var flipFrame = 0
     private let flipFrames = 16
@@ -121,13 +122,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             rebuildMenu(nil)
             return
         }
-        let oldSession = prevSession
+        let oldEpoch = prevSessionEpoch
         // Pulse only when the meaningful values (%) change, not when the ⏳ minute ticks.
         let changed = animationsEnabled
             && ((prevSession != nil && prevSession != u.sessionPct)
                 || (prevWeekly != nil && prevWeekly != u.weeklyPct))
         prevSession = u.sessionPct
         prevWeekly = u.weeklyPct
+        prevSessionEpoch = u.sessionEpoch
 
         statusItem.button?.toolTip = toolTipText(u)
         statusItem.button?.setAccessibilityLabel(accessibilityText(u))
@@ -135,8 +137,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rebuildMenu(u)
         if alertsEnabled {
             checkAlerts(u)
-            // Session % only drops when the window resets → notify that capacity is back.
-            if let ns = u.sessionPct, let os = oldSession, ns < os {
+            // A real reset advances the reset time to a new window. Keying off this (not a %
+            // dip, which happens on its own as a rolling window ages) avoids false alarms.
+            if let ne = u.sessionEpoch, let oe = oldEpoch, ne > oe + 60 {
                 postNotification(title: "Claude usage", body: "Session reset — full capacity available")
             }
         }
