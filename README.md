@@ -70,7 +70,7 @@ cd claude-usage-menubar
 - **Collection interval**: `StartInterval` (seconds) in `com.user.claude-usage.plist`. Default 60.
 - **Display refresh**: the `Timer` interval in `ClaudeUsageBar.swift` (default 30s).
 - **Color thresholds**: `color(forPct:)` in `ClaudeUsageBar.swift` — the menu bar text is colored by session %: 80%+ red, 60%+ orange.
-- **Animations**: toggle from the menu ("Animations", persisted across launches). When on, the icon is a drawn hourglass whose sand tracks session time left (stepped ~hourly), spins while a session is resetting, and the text pulses when a percentage changes. When off, a plain ⏳/↻ emoji with no motion.
+- **Animations**: toggle from the menu ("Animations", persisted across launches). When on, the icon is a drawn hourglass whose sand tracks session time left (stepped ~hourly), spins while a session is resetting, flips one full turn when you hit "Refresh now", and the text pulses when a percentage changes. When off, a plain ⏳/↻ emoji with no motion.
 
 After editing, run `./standalone/build.sh` to rebuild and apply immediately.
 

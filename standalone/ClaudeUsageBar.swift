@@ -20,6 +20,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var spinFrame = 0
     private var prevSession: Int?                // last shown session % (for change detection)
     private var prevWeekly: Int?                 // last shown weekly %
+    private var flipTimer: Timer?                // one-off hourglass flip on manual refresh
+    private var flipFrame = 0
+    private let flipFrames = 16
 
     struct Usage {
         var sessionPct: Int?; var sessionReset: String?; var sessionEpoch: Double?
@@ -114,6 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // With animations off: the plain ⏳/↻ emoji, no motion.
     private func updateStatusItem() {
         guard let button = statusItem.button else { return }
+        if flipTimer != nil { return }  // a refresh flip owns the icon until it finishes
         guard let u = lastGood else { button.image = nil; setTitle("Claude --", color: .systemRed); return }
         let s = u.sessionPct.map(String.init) ?? "?"
         let w = u.weeklyPct.map(String.init) ?? "?"
@@ -140,7 +144,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // A template hourglass image; sand level = remaining/window, quantized to whole hours
     // so it visibly changes about once per hour.
-    private func hourglassImage(remaining: Int, windowHours: Int) -> NSImage {
+    // scaleY animates a flip about the horizontal axis (1 upright, 0 edge-on, -1 upside down).
+    private func hourglassImage(remaining: Int, windowHours: Int, scaleY: CGFloat = 1) -> NSImage {
         let hoursLeft = max(0, Int(ceil(Double(remaining) / 3600.0)))
         let frac = min(1.0, Double(min(hoursLeft, windowHours)) / Double(max(1, windowHours)))
         let size = NSSize(width: 11, height: 15)
@@ -152,6 +157,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let w = size.width, h = size.height
         let p: CGFloat = line + 0.5
         let cx = w / 2, cy = h / 2, topY = h - p, botY = p, cap = p
+        if scaleY != 1 {  // vertical scale about the center → clean flip, no horizontal clipping
+            ctx.translateBy(x: 0, y: cy); ctx.scaleBy(x: 1, y: scaleY == 0 ? 0.001 : scaleY); ctx.translateBy(x: 0, y: -cy)
+        }
         NSColor.black.setStroke(); NSColor.black.setFill()
         let top = NSBezierPath()
         top.move(to: NSPoint(x: cap, y: topY)); top.line(to: NSPoint(x: w - cap, y: topY)); top.line(to: NSPoint(x: cx, y: cy)); top.close()
@@ -183,6 +191,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         spinTimer = t
     }
     private func stopSpinner() { spinTimer?.invalidate(); spinTimer = nil }
+
+    // Manual-refresh flourish: flip the hourglass one full turn, then settle back upright.
+    // Only when animations are on and the hourglass icon is showing (not during a reset).
+    private func flipRefreshIcon() {
+        guard animationsEnabled, statusItem.button != nil,
+              let u = lastGood, let epoch = u.sessionEpoch,
+              !(remaining(u.sessionEpoch, maxSeconds: sessionMax, short: true)?.resetting ?? false)
+        else { return }
+        let diff = Int(epoch - Date().timeIntervalSince1970)
+        flipTimer?.invalidate()
+        flipFrame = 0
+        let t = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in
+            guard let self = self, let btn = self.statusItem.button else { return }
+            self.flipFrame += 1
+            if self.flipFrame > self.flipFrames {
+                self.flipTimer?.invalidate(); self.flipTimer = nil
+                self.updateStatusItem()
+                return
+            }
+            let sy = cos(2 * CGFloat.pi * CGFloat(self.flipFrame) / CGFloat(self.flipFrames))
+            btn.image = self.hourglassImage(remaining: diff, windowHours: 5, scaleY: sy)
+            btn.imagePosition = .imageTrailing
+        }
+        RunLoop.main.add(t, forMode: .common)
+        flipTimer = t
+    }
 
     // Pulse: a quick fade-in of the menu bar text to signal a value change.
     private func pulse() {
@@ -243,6 +277,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Actions
     @objc private func refreshNow() {
+        flipRefreshIcon()  // immediate visual feedback
         let p = Process()
         p.executableURL = URL(fileURLWithPath: collectPath)
         p.terminationHandler = { [weak self] _ in DispatchQueue.main.async { self?.refresh() } }
