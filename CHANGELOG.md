@@ -10,6 +10,9 @@ All notable changes to this project are documented here. This project adheres to
 - README preview figure (`docs/preview.svg`) showing the menu bar item and dropdown.
 - `uninstall.sh`: guarded uninstaller (path guards, confirmation prompt, `--dry-run`
   and `-y` flags) that removes only what this project installs; never touches SwiftBar.
+- Optional animations (menu toggle, persisted via UserDefaults): a drawn hourglass icon
+  whose sand tracks session time left (stepped ~hourly), a spinner while a session is
+  resetting, and a pulse when a percentage changes. Off falls back to a plain emoji.
 
 ### Fixed
 - Session reset window no longer shows a nonsensical "364d23h" (and no red "Claude --"

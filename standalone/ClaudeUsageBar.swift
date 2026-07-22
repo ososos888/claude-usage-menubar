@@ -13,6 +13,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let sessionMax = 6 * 3600            // session window is 5h; treat >6h as a mid-reset artifact
     private let weeklyMax  = 8 * 86400           // weekly window is 7d; treat >8d as a mid-reset artifact
 
+    // Animations (toggleable, persisted). Spinner while resetting; a pulse when %s change.
+    private var animationsEnabled = UserDefaults.standard.object(forKey: "animationsEnabled") as? Bool ?? true
+    private let spinnerFrames = ["◐", "◓", "◑", "◒"]
+    private var spinTimer: Timer?
+    private var spinFrame = 0
+    private var prevSession: Int?                // last shown session % (for change detection)
+    private var prevWeekly: Int?                 // last shown weekly %
+
     struct Usage {
         var sessionPct: Int?; var sessionReset: String?; var sessionEpoch: Double?
         var weeklyPct: Int?;  var weeklyReset: String?;  var weeklyEpoch: Double?
@@ -85,14 +93,105 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             rebuildMenu(nil)
             return
         }
+        // Pulse only when the meaningful values (%) change, not when the ⏳ minute ticks.
+        let changed = animationsEnabled
+            && ((prevSession != nil && prevSession != u.sessionPct)
+                || (prevWeekly != nil && prevWeekly != u.weeklyPct))
+        prevSession = u.sessionPct
+        prevWeekly = u.weeklyPct
+
+        updateStatusItem()
+        rebuildMenu(u)
+
+        let resetting = remaining(u.sessionEpoch, maxSeconds: sessionMax, short: true)?.resetting ?? false
+        if animationsEnabled && resetting { startSpinner() } else { stopSpinner() }
+        if changed { pulse() }
+    }
+
+    // Renders the menu bar from lastGood. Used by refresh() and the spinner tick.
+    // With animations on: a drawn hourglass icon whose sand reflects session time left
+    //   (stepped ~hourly), a spinner while resetting, and a pulse on value change.
+    // With animations off: the plain ⏳/↻ emoji, no motion.
+    private func updateStatusItem() {
+        guard let button = statusItem.button else { return }
+        guard let u = lastGood else { button.image = nil; setTitle("Claude --", color: .systemRed); return }
         let s = u.sessionPct.map(String.init) ?? "?"
         let w = u.weeklyPct.map(String.init) ?? "?"
         var title = "s\(s)% · w\(w)%"  // s = session (5-hour rolling), w = weekly
-        if let r = remaining(u.sessionEpoch, maxSeconds: sessionMax, short: true) {
-            title += r.resetting ? " · ↻ \(r.text)" : " · ⏳\(r.text)"
+        let r = remaining(u.sessionEpoch, maxSeconds: sessionMax, short: true)
+        if let r = r, r.resetting {
+            button.image = nil
+            let icon = animationsEnabled ? spinnerFrames[spinFrame % spinnerFrames.count] : "↻"
+            title += " · \(icon) resetting"
+        } else if let r = r, animationsEnabled, let epoch = u.sessionEpoch {
+            let diff = Int(epoch - Date().timeIntervalSince1970)
+            button.image = hourglassImage(remaining: diff, windowHours: 5)  // sand = session time left
+            button.imagePosition = .imageTrailing
+            button.imageHugsTitle = true
+            title += " · \(r.text)"
+        } else if let r = r {
+            button.image = nil
+            title += " · ⏳\(r.text)"
+        } else {
+            button.image = nil
         }
         setTitle(title, color: color(forPct: u.sessionPct))
-        rebuildMenu(u)
+    }
+
+    // A template hourglass image; sand level = remaining/window, quantized to whole hours
+    // so it visibly changes about once per hour.
+    private func hourglassImage(remaining: Int, windowHours: Int) -> NSImage {
+        let hoursLeft = max(0, Int(ceil(Double(remaining) / 3600.0)))
+        let frac = min(1.0, Double(min(hoursLeft, windowHours)) / Double(max(1, windowHours)))
+        let size = NSSize(width: 11, height: 15)
+        let line: CGFloat = 1.1
+        let img = NSImage(size: size)
+        img.lockFocus()
+        defer { img.unlockFocus(); img.isTemplate = true }
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return img }
+        let w = size.width, h = size.height
+        let p: CGFloat = line + 0.5
+        let cx = w / 2, cy = h / 2, topY = h - p, botY = p, cap = p
+        NSColor.black.setStroke(); NSColor.black.setFill()
+        let top = NSBezierPath()
+        top.move(to: NSPoint(x: cap, y: topY)); top.line(to: NSPoint(x: w - cap, y: topY)); top.line(to: NSPoint(x: cx, y: cy)); top.close()
+        let bot = NSBezierPath()
+        bot.move(to: NSPoint(x: cap, y: botY)); bot.line(to: NSPoint(x: w - cap, y: botY)); bot.line(to: NSPoint(x: cx, y: cy)); bot.close()
+        ctx.saveGState(); top.addClip()
+        NSBezierPath(rect: NSRect(x: 0, y: cy, width: w, height: CGFloat(frac) * (topY - cy))).fill()
+        ctx.restoreGState()
+        ctx.saveGState(); bot.addClip()
+        NSBezierPath(rect: NSRect(x: 0, y: botY, width: w, height: CGFloat(1 - frac) * (cy - botY))).fill()
+        ctx.restoreGState()
+        top.lineWidth = line; top.stroke(); bot.lineWidth = line; bot.stroke()
+        let caps = NSBezierPath(); caps.lineWidth = line
+        caps.move(to: NSPoint(x: cap - line / 2, y: topY)); caps.line(to: NSPoint(x: w - cap + line / 2, y: topY))
+        caps.move(to: NSPoint(x: cap - line / 2, y: botY)); caps.line(to: NSPoint(x: w - cap + line / 2, y: botY))
+        caps.stroke()
+        return img
+    }
+
+    // Spinner: cycle the reset glyph while resetting (only runs during that brief window).
+    private func startSpinner() {
+        guard spinTimer == nil else { return }
+        let t = Timer.scheduledTimer(withTimeInterval: 0.18, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            self.spinFrame &+= 1
+            self.updateStatusItem()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        spinTimer = t
+    }
+    private func stopSpinner() { spinTimer?.invalidate(); spinTimer = nil }
+
+    // Pulse: a quick fade-in of the menu bar text to signal a value change.
+    private func pulse() {
+        guard let button = statusItem.button else { return }
+        button.alphaValue = 0.2
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.5
+            button.animator().alphaValue = 1.0
+        }
     }
 
     private func setTitle(_ text: String, color: NSColor?) {
@@ -126,6 +225,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         add(menu, "Refresh now", #selector(refreshNow), key: "r")
         add(menu, "Open usage page", #selector(openUsage), key: "")
+        let anim = NSMenuItem(title: "Animations", action: #selector(toggleAnimations), keyEquivalent: "")
+        anim.target = self
+        anim.state = animationsEnabled ? .on : .off
+        menu.addItem(anim)
         menu.addItem(.separator())
         add(menu, "Quit", #selector(quit), key: "q")
     }
@@ -147,6 +250,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc private func openUsage() {
         if let url = URL(string: "https://claude.ai/settings/usage") { NSWorkspace.shared.open(url) }
+    }
+    @objc private func toggleAnimations() {
+        animationsEnabled.toggle()
+        UserDefaults.standard.set(animationsEnabled, forKey: "animationsEnabled")
+        if !animationsEnabled { stopSpinner() }
+        updateStatusItem()
+        rebuildMenu(lastGood)
     }
     @objc private func quit() { NSApp.terminate(nil) }
 }
