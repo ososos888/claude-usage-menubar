@@ -14,6 +14,16 @@ All notable changes to this project are documented here. This project adheres to
   whose sand tracks session time left (stepped ~hourly), a spinner while a session is
   resetting, a full-turn hourglass flip when "Refresh now" is pressed, and a pulse when a
   percentage changes. Off falls back to a plain emoji.
+- Tooltip with the full session/weekly breakdown on hover.
+- "Copy status" menu item (copies the compact status to the clipboard).
+- Opt-in usage alerts: a macOS notification when session or weekly crosses 80%
+  (re-arms after dropping back below). Menu toggle, persisted.
+- "Start at login" menu toggle, backed by enabling/disabling the launchd agent
+  (does not kill the running app).
+- Reset-imminent emphasis: the menu bar text turns red when the session resets
+  within 15 minutes.
+- Build now ad-hoc code-signs the app bundle (free) so notifications work reliably
+  and Gatekeeper is satisfied.
 
 ### Fixed
 - Session reset window no longer shows a nonsensical "364d23h" (and no red "Claude --"

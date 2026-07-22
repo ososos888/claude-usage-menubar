@@ -3,6 +3,7 @@
 // and renders it in the menu bar. Reading a local file only, it triggers virtually no
 // macOS permission prompts.
 import Cocoa
+import UserNotifications
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
@@ -24,6 +25,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var flipFrame = 0
     private let flipFrames = 16
 
+    // Usage alerts (opt-in, persisted): notify once when a metric crosses the threshold.
+    private var alertsEnabled = UserDefaults.standard.bool(forKey: "usageAlerts")
+    private let alertThreshold = 80
+    private var sessionAlerted = false
+    private var weeklyAlerted = false
+    // Emphasize (red) when the session is about to reset.
+    private let imminentSeconds = 15 * 60
+    // Auto-start at login is driven by the launchd agent; toggle enables/disables it.
+    private let agentLabel = "com.ososos888.claudeusagebar"
+    private lazy var startAtLoginEnabled: Bool = queryStartAtLogin()
+
     struct Usage {
         var sessionPct: Int?; var sessionReset: String?; var sessionEpoch: Double?
         var weeklyPct: Int?;  var weeklyReset: String?;  var weeklyEpoch: Double?
@@ -36,6 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
+        if alertsEnabled { requestNotificationAuth() }
         refresh()
         // Reload the file + recompute remaining time every 30s (keeps the ⏳ minute fresh).
         let t = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in self?.refresh() }
@@ -92,6 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func refresh() {
         if let fresh = load() { lastGood = fresh }  // reuse last good on a transient read failure
         guard let u = lastGood else {
+            statusItem.button?.toolTip = "No data (daemon not running?)"
             setTitle("Claude --", color: .systemRed)
             rebuildMenu(nil)
             return
@@ -103,12 +117,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         prevSession = u.sessionPct
         prevWeekly = u.weeklyPct
 
+        statusItem.button?.toolTip = toolTipText(u)
         updateStatusItem()
         rebuildMenu(u)
+        if alertsEnabled { checkAlerts(u) }
 
         let resetting = remaining(u.sessionEpoch, maxSeconds: sessionMax, short: true)?.resetting ?? false
         if animationsEnabled && resetting { startSpinner() } else { stopSpinner() }
         if changed { pulse() }
+    }
+
+    private func toolTipText(_ u: Usage) -> String {
+        var lines: [String] = []
+        let s = u.sessionPct.map(String.init) ?? "?"
+        let sRem = remaining(u.sessionEpoch, maxSeconds: sessionMax, short: false)?.text ?? "resets \(u.sessionReset ?? "?")"
+        lines.append("Session: \(s)% used · \(sRem)")
+        let w = u.weeklyPct.map(String.init) ?? "?"
+        let wRem = remaining(u.weeklyEpoch, maxSeconds: weeklyMax, short: false)?.text ?? "resets \(u.weeklyReset ?? "?")"
+        lines.append("Weekly (all models): \(w)% used · \(wRem)")
+        if let ml = u.modelLabel, let mp = u.modelPct { lines.append("Weekly (\(ml)): \(mp)%") }
+        if let ca = u.collectedAt { lines.append("Updated: \(ca)") }
+        return lines.joined(separator: "\n")
     }
 
     // Renders the menu bar from lastGood. Used by refresh() and the spinner tick.
@@ -139,7 +168,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             button.image = nil
         }
-        setTitle(title, color: color(forPct: u.sessionPct))
+        // Emphasize red when the session is about to reset (but not once it's resetting).
+        var titleColor = color(forPct: u.sessionPct)
+        if !(r?.resetting ?? false), let epoch = u.sessionEpoch {
+            let diff = Int(epoch - Date().timeIntervalSince1970)
+            if diff > 30 && diff <= imminentSeconds { titleColor = .systemRed }
+        }
+        setTitle(title, color: titleColor)
     }
 
     // A template hourglass image; sand level = remaining/window, quantized to whole hours
@@ -228,6 +263,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    // MARK: - Alerts
+    private func requestNotificationAuth() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+    private func checkAlerts(_ u: Usage) {
+        evalAlert(name: "Session", pct: u.sessionPct, alerted: &sessionAlerted)
+        evalAlert(name: "Weekly",  pct: u.weeklyPct,  alerted: &weeklyAlerted)
+    }
+    private func evalAlert(name: String, pct: Int?, alerted: inout Bool) {
+        guard let p = pct else { return }
+        if p >= alertThreshold {
+            if !alerted {
+                postNotification(title: "Claude usage", body: "\(name) usage at \(p)% (alert at \(alertThreshold)%)")
+                alerted = true
+            }
+        } else {
+            alerted = false   // re-arm once it drops back below the threshold (e.g. after reset)
+        }
+    }
+    private func postNotification(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        let req = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(req)
+    }
+
+    // MARK: - Start at login (via the launchd agent; enable/disable does not kill the running app)
+    @discardableResult
+    private func runLaunchctl(_ args: [String]) -> String? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        p.arguments = args
+        let out = Pipe(); p.standardOutput = out; p.standardError = Pipe()
+        guard (try? p.run()) != nil else { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return String(data: data, encoding: .utf8)
+    }
+    private func queryStartAtLogin() -> Bool {
+        if let out = runLaunchctl(["print-disabled", "gui/\(getuid())"]) {
+            // Output format varies by macOS: `"label" => disabled` (or `=> true`) means off.
+            if out.contains("\"\(agentLabel)\" => disabled") || out.contains("\"\(agentLabel)\" => true")  { return false }
+            if out.contains("\"\(agentLabel)\" => enabled")  || out.contains("\"\(agentLabel)\" => false") { return true }
+        }
+        // No explicit override → enabled if the agent plist exists.
+        return FileManager.default.fileExists(
+            atPath: NSString(string: "~/Library/LaunchAgents/\(agentLabel).plist").expandingTildeInPath)
+    }
+    private func setStartAtLogin(_ on: Bool) {
+        runLaunchctl([on ? "enable" : "disable", "gui/\(getuid())/\(agentLabel)"])
+    }
+
     private func setTitle(_ text: String, color: NSColor?) {
         guard let button = statusItem.button else { return }
         var attrs: [NSAttributedString.Key: Any] = [.font: NSFont.menuBarFont(ofSize: 0)]
@@ -258,11 +347,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             info("No data (daemon not running?)")
         }
         add(menu, "Refresh now", #selector(refreshNow), key: "r")
+        add(menu, "Copy status", #selector(copyStatus), key: "")
         add(menu, "Open usage page", #selector(openUsage), key: "")
-        let anim = NSMenuItem(title: "Animations", action: #selector(toggleAnimations), keyEquivalent: "")
-        anim.target = self
-        anim.state = animationsEnabled ? .on : .off
-        menu.addItem(anim)
+        menu.addItem(.separator())
+        addCheck(menu, "Animations", #selector(toggleAnimations), on: animationsEnabled)
+        addCheck(menu, "Usage alerts (\(alertThreshold)%)", #selector(toggleAlerts), on: alertsEnabled)
+        addCheck(menu, "Start at login", #selector(toggleStartAtLogin), on: startAtLoginEnabled)
         menu.addItem(.separator())
         add(menu, "Quit", #selector(quit), key: "q")
     }
@@ -270,6 +360,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func add(_ menu: NSMenu, _ title: String, _ sel: Selector, key: String) {
         let it = NSMenuItem(title: title, action: sel, keyEquivalent: key)
         it.target = self
+        menu.addItem(it)
+    }
+    private func addCheck(_ menu: NSMenu, _ title: String, _ sel: Selector, on: Bool) {
+        let it = NSMenuItem(title: title, action: sel, keyEquivalent: "")
+        it.target = self
+        it.state = on ? .on : .off
         menu.addItem(it)
     }
 
@@ -285,6 +381,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc private func openUsage() {
         if let url = URL(string: "https://claude.ai/settings/usage") { NSWorkspace.shared.open(url) }
+    }
+    @objc private func copyStatus() {
+        guard let u = lastGood else { return }
+        let s = u.sessionPct.map(String.init) ?? "?"
+        let w = u.weeklyPct.map(String.init) ?? "?"
+        var str = "s\(s)% · w\(w)%"
+        if let r = remaining(u.sessionEpoch, maxSeconds: sessionMax, short: true) {
+            str += r.resetting ? " · resetting" : " · \(r.text)"
+        }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(str, forType: .string)
+    }
+    @objc private func toggleAlerts() {
+        alertsEnabled.toggle()
+        UserDefaults.standard.set(alertsEnabled, forKey: "usageAlerts")
+        if alertsEnabled { requestNotificationAuth() }
+        rebuildMenu(lastGood)
+    }
+    @objc private func toggleStartAtLogin() {
+        startAtLoginEnabled.toggle()
+        setStartAtLogin(startAtLoginEnabled)
+        rebuildMenu(lastGood)
     }
     @objc private func toggleAnimations() {
         animationsEnabled.toggle()

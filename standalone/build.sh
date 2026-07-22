@@ -41,6 +41,8 @@ EOF
 
 # Remove the quarantine attribute so Gatekeeper doesn't block the locally built binary.
 xattr -dr com.apple.quarantine "$APPDIR" 2>/dev/null || true
+# Ad-hoc sign (free, no Apple account) so notifications work and Gatekeeper is happy.
+codesign --force --deep --sign - "$APPDIR" 2>/dev/null || true
 
 echo "==> Registering launchd auto-start: $PLIST"
 cat > "$PLIST" <<EOF

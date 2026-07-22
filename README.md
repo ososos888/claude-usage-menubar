@@ -25,6 +25,14 @@ Quit
 
 No third-party app like SwiftBar required. Because it only reads a local file, it triggers virtually no macOS permission prompts.
 
+Extras (all lightweight, from the menu):
+
+- **Tooltip** — hover the icon for the full breakdown without clicking.
+- **Copy status** — copy `s.. · w.. · <time>` to the clipboard.
+- **Usage alerts** — opt-in macOS notification when session or weekly crosses 80%.
+- **Start at login** — toggle auto-start (backed by the launchd agent).
+- **Reset-imminent emphasis** — the text turns red when the session resets within 15 minutes.
+
 ## How it works
 
 ```
