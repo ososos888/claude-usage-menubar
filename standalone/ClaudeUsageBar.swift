@@ -150,31 +150,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let u = lastGood else { button.image = nil; setTitle("Claude --", color: .systemRed); return }
         let s = u.sessionPct.map(String.init) ?? "?"
         let w = u.weeklyPct.map(String.init) ?? "?"
-        var title = "s\(s)% · w\(w)%"  // s = session (5-hour rolling), w = weekly
+        // Each item is colored by its own state (session %, weekly %, time-left).
+        var segs: [(String, NSColor?)] = [
+            ("s\(s)%", color(forPct: u.sessionPct)),
+            (" · ", nil),
+            ("w\(w)%", color(forPct: u.weeklyPct)),
+        ]
         let r = remaining(u.sessionEpoch, maxSeconds: sessionMax, short: true)
         if let r = r, r.resetting {
             button.image = nil
             let icon = animationsEnabled ? spinnerFrames[spinFrame % spinnerFrames.count] : "↻"
-            title += " · \(icon) resetting"
+            segs.append((" · \(icon) resetting", nil))
         } else if let r = r, animationsEnabled, let epoch = u.sessionEpoch {
             let diff = Int(epoch - Date().timeIntervalSince1970)
             button.image = hourglassImage(remaining: diff, windowHours: 5)  // sand = session time left
             button.imagePosition = .imageTrailing
             button.imageHugsTitle = true
-            title += " · \(r.text)"
+            segs.append((" · ", nil))
+            segs.append((r.text, timeColor(u.sessionEpoch)))
         } else if let r = r {
             button.image = nil
-            title += " · ⏳\(r.text)"
+            segs.append((" · ⏳", nil))
+            segs.append((r.text, timeColor(u.sessionEpoch)))
         } else {
             button.image = nil
         }
-        // Emphasize red when the session is about to reset (but not once it's resetting).
-        var titleColor = color(forPct: u.sessionPct)
-        if !(r?.resetting ?? false), let epoch = u.sessionEpoch {
-            let diff = Int(epoch - Date().timeIntervalSince1970)
-            if diff > 30 && diff <= imminentSeconds { titleColor = .systemRed }
-        }
-        setTitle(title, color: titleColor)
+        setSegments(segs)
+    }
+
+    // Color for the time-left item: orange within 60 min of reset, red within 15 min.
+    private func timeColor(_ epoch: Double?) -> NSColor? {
+        guard let e = epoch else { return nil }
+        let diff = Int(e - Date().timeIntervalSince1970)
+        if diff <= 30 { return nil }                 // resetting is handled elsewhere
+        if diff <= imminentSeconds { return .systemRed }
+        if diff <= 60 * 60 { return .systemOrange }
+        return nil
     }
 
     // A template hourglass image; sand level = remaining/window, quantized to whole hours
@@ -318,10 +329,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func setTitle(_ text: String, color: NSColor?) {
+        setSegments([(text, color)])
+    }
+
+    // Build the menu bar title from colored segments (nil color = default/adaptive).
+    private func setSegments(_ segments: [(String, NSColor?)]) {
         guard let button = statusItem.button else { return }
-        var attrs: [NSAttributedString.Key: Any] = [.font: NSFont.menuBarFont(ofSize: 0)]
-        if let c = color { attrs[.foregroundColor] = c }
-        button.attributedTitle = NSAttributedString(string: text, attributes: attrs)
+        let font = NSFont.menuBarFont(ofSize: 0)
+        let result = NSMutableAttributedString()
+        for (text, color) in segments {
+            var attrs: [NSAttributedString.Key: Any] = [.font: font]
+            if let c = color { attrs[.foregroundColor] = c }
+            result.append(NSAttributedString(string: text, attributes: attrs))
+        }
+        button.attributedTitle = result
     }
 
     private func rebuildMenu(_ u: Usage?) {

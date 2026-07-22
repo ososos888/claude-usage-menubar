@@ -31,7 +31,7 @@ Extras (all lightweight, from the menu):
 - **Copy status** — copy `s.. · w.. · <time>` to the clipboard.
 - **Usage alerts** — opt-in macOS notification when session or weekly crosses 80%.
 - **Start at login** — toggle auto-start (backed by the launchd agent).
-- **Reset-imminent emphasis** — the text turns red when the session resets within 15 minutes.
+- **Per-item colors** — session %, weekly %, and time-left are each colored by their own state (session/weekly: 60%+ orange, 80%+ red; time: orange within 60 min of reset, red within 15 min).
 
 ## How it works
 
@@ -77,7 +77,7 @@ cd claude-usage-menubar
 
 - **Collection interval**: `StartInterval` (seconds) in `com.user.claude-usage.plist`. Default 60.
 - **Display refresh**: the `Timer` interval in `ClaudeUsageBar.swift` (default 30s).
-- **Color thresholds**: `color(forPct:)` in `ClaudeUsageBar.swift` — the menu bar text is colored by session %: 80%+ red, 60%+ orange.
+- **Color thresholds**: `color(forPct:)` and `timeColor(_:)` in `ClaudeUsageBar.swift`. Each item is colored independently — session % and weekly % at 60%+ orange / 80%+ red; time-left at ≤60 min orange / ≤15 min red.
 - **Animations**: toggle from the menu ("Animations", persisted across launches). When on, the icon is a drawn hourglass whose sand tracks session time left (stepped ~hourly), spins while a session is resetting, flips one full turn when you hit "Refresh now", and the text pulses when a percentage changes. When off, a plain ⏳/↻ emoji with no motion.
 
 After editing, run `./standalone/build.sh` to rebuild and apply immediately.

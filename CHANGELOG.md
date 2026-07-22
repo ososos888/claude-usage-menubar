@@ -4,6 +4,13 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+- Menu bar coloring is now per-item: session %, weekly %, and time-left are each
+  colored by their own state, instead of a single color for the whole title.
+  (session/weekly: 60%+ orange, 80%+ red; time: ≤60 min orange, ≤15 min red.)
+
 ## [1.1.0] - 2026-07-22
 
 ### Added
