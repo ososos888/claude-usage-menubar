@@ -4,6 +4,13 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.2] - 2026-07-22
+
+### Fixed
+- The "resetting" spinner no longer wobbles. It cycled block glyphs (◐◓◑◒) whose
+  advance widths differed frame to frame, jittering the title. It now smoothly rotates
+  the hourglass icon in a fixed-size square canvas, so the width stays constant.
+
 ## [1.2.1] - 2026-07-22
 
 ### Fixed
@@ -72,6 +79,7 @@ All notable changes to this project are documented here. This project adheres to
 - Color thresholds in the menu bar (80%+ red, 60%+ orange).
 - Optional SwiftBar plugin (`swiftbar/claude_usage.1m.sh`) for users who prefer SwiftBar.
 
+[1.2.2]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.2.2
 [1.2.1]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.2.1
 [1.2.0]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.2.0
 [1.1.0]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.1.0

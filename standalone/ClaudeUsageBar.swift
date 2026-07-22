@@ -16,7 +16,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // Animations (toggleable, persisted). Spinner while resetting; a pulse when %s change.
     private var animationsEnabled = UserDefaults.standard.object(forKey: "animationsEnabled") as? Bool ?? true
-    private let spinnerFrames = ["◐", "◓", "◑", "◒"]
     private var spinTimer: Timer?
     private var spinFrame = 0
     private var prevSession: Int?                // last shown session % (for change detection)
@@ -207,9 +206,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let r = remaining(u.sessionEpoch, maxSeconds: sessionMax, short: true)
         if let r = r, r.resetting {
-            button.image = nil
-            let icon = animationsEnabled ? spinnerFrames[spinFrame % spinnerFrames.count] : "↻"
-            segs.append((" · \(icon) resetting", nil))
+            if animationsEnabled {
+                button.imagePosition = .imageTrailing   // the spinner timer drives the rotating icon
+                segs.append((" · resetting", nil))
+            } else {
+                button.image = nil
+                segs.append((" · ↻ resetting", nil))
+            }
         } else if let r = r, animationsEnabled, let epoch = u.sessionEpoch {
             let diff = Int(epoch - Date().timeIntervalSince1970)
             button.image = hourglassImage(remaining: diff, windowHours: 5)  // sand = session time left
@@ -239,48 +242,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // A template hourglass image; sand level = remaining/window, quantized to whole hours
     // so it visibly changes about once per hour.
-    // scaleY animates a flip about the horizontal axis (1 upright, 0 edge-on, -1 upside down).
-    private func hourglassImage(remaining: Int, windowHours: Int, scaleY: CGFloat = 1) -> NSImage {
+    //   scaleY — flip about the horizontal axis (1 upright, 0 edge-on, -1 upside down).
+    //   angle  — true rotation (for the resetting spinner).
+    //   spinning — draw in a square canvas so rotation never clips and the width stays fixed.
+    private func hourglassImage(remaining: Int, windowHours: Int,
+                                scaleY: CGFloat = 1, angle: CGFloat = 0, spinning: Bool = false) -> NSImage {
         let hoursLeft = max(0, Int(ceil(Double(remaining) / 3600.0)))
         let frac = min(1.0, Double(min(hoursLeft, windowHours)) / Double(max(1, windowHours)))
-        let size = NSSize(width: 11, height: 15)
-        let line: CGFloat = 1.1
+        let bw: CGFloat = 11, bh: CGFloat = 15, line: CGFloat = 1.1
+        let size = spinning ? NSSize(width: 21, height: 21) : NSSize(width: bw, height: bh)
         let img = NSImage(size: size)
         img.lockFocus()
         defer { img.unlockFocus(); img.isTemplate = true }
         guard let ctx = NSGraphicsContext.current?.cgContext else { return img }
-        let w = size.width, h = size.height
-        let p: CGFloat = line + 0.5
-        let cx = w / 2, cy = h / 2, topY = h - p, botY = p, cap = p
-        if scaleY != 1 {  // vertical scale about the center → clean flip, no horizontal clipping
-            ctx.translateBy(x: 0, y: cy); ctx.scaleBy(x: 1, y: scaleY == 0 ? 0.001 : scaleY); ctx.translateBy(x: 0, y: -cy)
-        }
+        // Transform about the canvas center: rotate, then vertical scale (flip).
+        ctx.translateBy(x: size.width / 2, y: size.height / 2)
+        if angle != 0 { ctx.rotate(by: angle) }
+        if scaleY != 1 { ctx.scaleBy(x: 1, y: scaleY == 0 ? 0.001 : scaleY) }
+        ctx.translateBy(x: -size.width / 2, y: -size.height / 2)
+        // Hourglass geometry inside its bw×bh box, centered in the (possibly square) canvas.
+        let ox = (size.width - bw) / 2, oy = (size.height - bh) / 2, p = line + 0.5
+        let cx = ox + bw / 2, cy = oy + bh / 2, topY = oy + bh - p, botY = oy + p, capL = ox + p, capR = ox + bw - p
         NSColor.black.setStroke(); NSColor.black.setFill()
         let top = NSBezierPath()
-        top.move(to: NSPoint(x: cap, y: topY)); top.line(to: NSPoint(x: w - cap, y: topY)); top.line(to: NSPoint(x: cx, y: cy)); top.close()
+        top.move(to: NSPoint(x: capL, y: topY)); top.line(to: NSPoint(x: capR, y: topY)); top.line(to: NSPoint(x: cx, y: cy)); top.close()
         let bot = NSBezierPath()
-        bot.move(to: NSPoint(x: cap, y: botY)); bot.line(to: NSPoint(x: w - cap, y: botY)); bot.line(to: NSPoint(x: cx, y: cy)); bot.close()
+        bot.move(to: NSPoint(x: capL, y: botY)); bot.line(to: NSPoint(x: capR, y: botY)); bot.line(to: NSPoint(x: cx, y: cy)); bot.close()
         ctx.saveGState(); top.addClip()
-        NSBezierPath(rect: NSRect(x: 0, y: cy, width: w, height: CGFloat(frac) * (topY - cy))).fill()
+        NSBezierPath(rect: NSRect(x: ox, y: cy, width: bw, height: CGFloat(frac) * (topY - cy))).fill()
         ctx.restoreGState()
         ctx.saveGState(); bot.addClip()
-        NSBezierPath(rect: NSRect(x: 0, y: botY, width: w, height: CGFloat(1 - frac) * (cy - botY))).fill()
+        NSBezierPath(rect: NSRect(x: ox, y: botY, width: bw, height: CGFloat(1 - frac) * (cy - botY))).fill()
         ctx.restoreGState()
         top.lineWidth = line; top.stroke(); bot.lineWidth = line; bot.stroke()
         let caps = NSBezierPath(); caps.lineWidth = line
-        caps.move(to: NSPoint(x: cap - line / 2, y: topY)); caps.line(to: NSPoint(x: w - cap + line / 2, y: topY))
-        caps.move(to: NSPoint(x: cap - line / 2, y: botY)); caps.line(to: NSPoint(x: w - cap + line / 2, y: botY))
+        caps.move(to: NSPoint(x: capL - line / 2, y: topY)); caps.line(to: NSPoint(x: capR + line / 2, y: topY))
+        caps.move(to: NSPoint(x: capL - line / 2, y: botY)); caps.line(to: NSPoint(x: capR + line / 2, y: botY))
         caps.stroke()
         return img
     }
 
-    // Spinner: cycle the reset glyph while resetting (only runs during that brief window).
+    // Spinner: smoothly rotate the hourglass icon while resetting (fixed-size square canvas,
+    // so no width jitter). Only runs during that brief window.
     private func startSpinner() {
         guard spinTimer == nil else { return }
-        let t = Timer.scheduledTimer(withTimeInterval: 0.18, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
+        let t = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            guard let self = self, let btn = self.statusItem.button else { return }
             self.spinFrame &+= 1
-            self.updateStatusItem()
+            let angle = 2 * CGFloat.pi * CGFloat(self.spinFrame % 40) / 40  // ~2s per revolution
+            btn.image = self.hourglassImage(remaining: 0, windowHours: 5, angle: angle, spinning: true)
+            btn.imagePosition = .imageTrailing
         }
         RunLoop.main.add(t, forMode: .common)
         spinTimer = t
