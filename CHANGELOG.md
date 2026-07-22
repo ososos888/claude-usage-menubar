@@ -4,7 +4,7 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.1.0] - 2026-07-22
 
 ### Added
 - README preview figure (`docs/preview.svg`) showing the menu bar item and dropdown.
@@ -46,4 +46,5 @@ All notable changes to this project are documented here. This project adheres to
 - Color thresholds in the menu bar (80%+ red, 60%+ orange).
 - Optional SwiftBar plugin (`swiftbar/claude_usage.1m.sh`) for users who prefer SwiftBar.
 
+[1.1.0]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.1.0
 [1.0.0]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.0.0
