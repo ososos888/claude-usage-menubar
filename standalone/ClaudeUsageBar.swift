@@ -136,9 +136,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rebuildMenu(u)
         if alertsEnabled {
             checkAlerts(u)
-            // A real reset advances the reset time to a new window. Keying off this (not a %
-            // dip, which happens on its own as a rolling window ages) avoids false alarms.
-            if let ne = u.sessionEpoch, let oe = oldEpoch, ne > oe + 60 {
+            // A reset only happens when the countdown expires, so the reset time jumps ~a full
+            // window (~5h) forward all at once. The reported time also drifts by a few minutes
+            // as a rolling window ages — so require a large jump (>3h) to avoid false alarms.
+            if let ne = u.sessionEpoch, let oe = oldEpoch, ne - oe > 3 * 3600 {
                 postNotification(title: "Claude usage", body: "Session reset — full capacity available")
             }
         }
