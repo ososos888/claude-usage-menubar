@@ -4,12 +4,24 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.2.0] - 2026-07-22
+
+### Added
+- Selectable usage-alert threshold (Off / 70% / 80% / 90%) via a submenu.
+- Reset notification: when a session resets, an alert notes capacity is back (requires alerts on).
+- Compact mode (menu toggle): show only the session item to save menu bar width.
+- Stale-data indicator: if the collector daemon stops updating, the menu bar dims and shows ⚠.
+- About item (opens the project page; shows the app version).
+- VoiceOver accessibility label carrying the full status.
 
 ### Changed
 - Menu bar coloring is now per-item: session %, weekly %, and time-left are each
   colored by their own state, instead of a single color for the whole title.
   (session/weekly: 60%+ orange, 80%+ red; time: ≤60 min orange, ≤15 min red.)
+
+### Fixed
+- Colored menu bar text reverts to the default color while the menu is open, so it
+  reads correctly on the blue highlight.
 
 ## [1.1.0] - 2026-07-22
 
@@ -53,5 +65,6 @@ All notable changes to this project are documented here. This project adheres to
 - Color thresholds in the menu bar (80%+ red, 60%+ orange).
 - Optional SwiftBar plugin (`swiftbar/claude_usage.1m.sh`) for users who prefer SwiftBar.
 
+[1.2.0]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.2.0
 [1.1.0]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.1.0
 [1.0.0]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.0.0

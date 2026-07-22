@@ -27,11 +27,15 @@ No third-party app like SwiftBar required. Because it only reads a local file, i
 
 Extras (all lightweight, from the menu):
 
+- **Per-item colors** — session %, weekly %, and time-left are each colored by their own state (session/weekly: 60%+ orange, 80%+ red; time: orange within 60 min of reset, red within 15 min).
 - **Tooltip** — hover the icon for the full breakdown without clicking.
 - **Copy status** — copy `s.. · w.. · <time>` to the clipboard.
-- **Usage alerts** — opt-in macOS notification when session or weekly crosses 80%.
+- **Usage alerts** — opt-in macOS notification when session or weekly crosses a chosen threshold (70 / 80 / 90%), plus a note when a session resets.
+- **Compact mode** — show only the session item to save menu bar width.
+- **Stale indicator** — if the collector daemon stops updating, the text dims and shows ⚠.
 - **Start at login** — toggle auto-start (backed by the launchd agent).
-- **Per-item colors** — session %, weekly %, and time-left are each colored by their own state (session/weekly: 60%+ orange, 80%+ red; time: orange within 60 min of reset, red within 15 min).
+- **About** — opens the project page and shows the version.
+- **VoiceOver** — the icon exposes the full status as an accessibility label.
 
 ## How it works
 
@@ -108,7 +112,7 @@ rm -rf ~/Applications/ClaudeUsageBar.app ~/.claude-usage
 
 ## Versioning
 
-This project follows [Semantic Versioning](https://semver.org/). See [CHANGELOG.md](CHANGELOG.md). Current version: **1.1.0**.
+This project follows [Semantic Versioning](https://semver.org/). See [CHANGELOG.md](CHANGELOG.md). Current version: **1.2.0**.
 
 ## License
 

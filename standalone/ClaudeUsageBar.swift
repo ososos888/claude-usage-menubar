@@ -27,7 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // Usage alerts (opt-in, persisted): notify once when a metric crosses the threshold.
     private var alertsEnabled = UserDefaults.standard.bool(forKey: "usageAlerts")
-    private let alertThreshold = 80
+    private var alertThreshold = UserDefaults.standard.object(forKey: "alertThreshold") as? Int ?? 80
     private var sessionAlerted = false
     private var weeklyAlerted = false
     // Emphasize (red) when the session is about to reset.
@@ -36,11 +36,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let agentLabel = "com.ososos888.claudeusagebar"
     private lazy var startAtLoginEnabled: Bool = queryStartAtLogin()
 
+    // Compact mode: show only the session item to save menu bar width.
+    private var compactEnabled = UserDefaults.standard.bool(forKey: "compactMode")
+    // Stale detection: if the collector hasn't updated checked_at in this long, dim + warn.
+    private let iso = ISO8601DateFormatter()
+    private let staleSeconds: Double = 180
+    // While the menu is open the status button is highlighted; drop explicit colors then so
+    // the text inverts properly on the blue highlight.
+    private var menuOpen = false
+    private let repoURL = "https://github.com/ososos888/claude-usage-menubar"
+    private var appVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?" }
+
     struct Usage {
         var sessionPct: Int?; var sessionReset: String?; var sessionEpoch: Double?
         var weeklyPct: Int?;  var weeklyReset: String?;  var weeklyEpoch: Double?
         var modelLabel: String?; var modelPct: Int?
-        var error: String?; var collectedAt: String?
+        var error: String?; var collectedAt: String?; var checkedAt: String?
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -67,7 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         u.sessionPct = int("session_pct"); u.sessionReset = str("session_reset"); u.sessionEpoch = dbl("session_reset_epoch")
         u.weeklyPct = int("weekly_all_pct"); u.weeklyReset = str("weekly_all_reset"); u.weeklyEpoch = dbl("weekly_all_reset_epoch")
         u.modelLabel = str("weekly_model_label"); u.modelPct = int("weekly_model_pct")
-        u.error = str("error"); u.collectedAt = str("collected_at")
+        u.error = str("error"); u.collectedAt = str("collected_at"); u.checkedAt = str("checked_at")
         return u
     }
 
@@ -110,6 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             rebuildMenu(nil)
             return
         }
+        let oldSession = prevSession
         // Pulse only when the meaningful values (%) change, not when the ⏳ minute ticks.
         let changed = animationsEnabled
             && ((prevSession != nil && prevSession != u.sessionPct)
@@ -118,9 +130,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         prevWeekly = u.weeklyPct
 
         statusItem.button?.toolTip = toolTipText(u)
+        statusItem.button?.setAccessibilityLabel(accessibilityText(u))
         updateStatusItem()
         rebuildMenu(u)
-        if alertsEnabled { checkAlerts(u) }
+        if alertsEnabled {
+            checkAlerts(u)
+            // Session % only drops when the window resets → notify that capacity is back.
+            if let ns = u.sessionPct, let os = oldSession, ns < os {
+                postNotification(title: "Claude usage", body: "Session reset — full capacity available")
+            }
+        }
 
         let resetting = remaining(u.sessionEpoch, maxSeconds: sessionMax, short: true)?.resetting ?? false
         if animationsEnabled && resetting { startSpinner() } else { stopSpinner() }
@@ -137,7 +156,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         lines.append("Weekly (all models): \(w)% used · \(wRem)")
         if let ml = u.modelLabel, let mp = u.modelPct { lines.append("Weekly (\(ml)): \(mp)%") }
         if let ca = u.collectedAt { lines.append("Updated: \(ca)") }
+        if isStale(u) { lines.append("⚠ Data may be stale — the collector daemon may have stopped.") }
         return lines.joined(separator: "\n")
+    }
+
+    private func epoch(fromISO s: String?) -> Double? {
+        guard let s = s, let d = iso.date(from: s) else { return nil }
+        return d.timeIntervalSince1970
+    }
+    private func isStale(_ u: Usage) -> Bool {
+        guard let e = epoch(fromISO: u.checkedAt) else { return false }
+        return Date().timeIntervalSince1970 - e > staleSeconds
+    }
+    private func accessibilityText(_ u: Usage) -> String {
+        let s = u.sessionPct.map(String.init) ?? "unknown"
+        let w = u.weeklyPct.map(String.init) ?? "unknown"
+        var t = "Claude usage. Session \(s) percent. Weekly \(w) percent."
+        if let r = remaining(u.sessionEpoch, maxSeconds: sessionMax, short: false) {
+            t += r.resetting ? " Session resetting." : " Session \(r.text)."
+        }
+        if isStale(u) { t += " Data may be stale." }
+        return t
     }
 
     // Renders the menu bar from lastGood. Used by refresh() and the spinner tick.
@@ -150,12 +189,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let u = lastGood else { button.image = nil; setTitle("Claude --", color: .systemRed); return }
         let s = u.sessionPct.map(String.init) ?? "?"
         let w = u.weeklyPct.map(String.init) ?? "?"
+        // Stale data (collector stopped): dim and mark, don't imply the old numbers are live.
+        if isStale(u) {
+            button.image = nil
+            let body = compactEnabled ? "⚠ s\(s)%" : "⚠ s\(s)% · w\(w)%"
+            setSegments([(body, .secondaryLabelColor)])
+            return
+        }
         // Each item is colored by its own state (session %, weekly %, time-left).
-        var segs: [(String, NSColor?)] = [
-            ("s\(s)%", color(forPct: u.sessionPct)),
-            (" · ", nil),
-            ("w\(w)%", color(forPct: u.weeklyPct)),
-        ]
+        var segs: [(String, NSColor?)] = [("s\(s)%", color(forPct: u.sessionPct))]
+        if !compactEnabled {
+            segs.append((" · ", nil))
+            segs.append(("w\(w)%", color(forPct: u.weeklyPct)))
+        }
         let r = remaining(u.sessionEpoch, maxSeconds: sessionMax, short: true)
         if let r = r, r.resetting {
             button.image = nil
@@ -339,7 +385,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let result = NSMutableAttributedString()
         for (text, color) in segments {
             var attrs: [NSAttributedString.Key: Any] = [.font: font]
-            if let c = color { attrs[.foregroundColor] = c }
+            // While the menu is open, let the system color the (highlighted) text.
+            if let c = color, !menuOpen { attrs[.foregroundColor] = c }
             result.append(NSAttributedString(string: text, attributes: attrs))
         }
         button.attributedTitle = result
@@ -372,9 +419,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         add(menu, "Open usage page", #selector(openUsage), key: "")
         menu.addItem(.separator())
         addCheck(menu, "Animations", #selector(toggleAnimations), on: animationsEnabled)
-        addCheck(menu, "Usage alerts (\(alertThreshold)%)", #selector(toggleAlerts), on: alertsEnabled)
+        addCheck(menu, "Compact (session only)", #selector(toggleCompact), on: compactEnabled)
+        // Usage alerts: Off / 70% / 80% / 90%
+        let alertsItem = NSMenuItem(title: "Usage alerts", action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+        let off = NSMenuItem(title: "Off", action: #selector(setAlertOption(_:)), keyEquivalent: "")
+        off.target = self; off.tag = 0; off.state = alertsEnabled ? .off : .on
+        sub.addItem(off)
+        for thr in [70, 80, 90] {
+            let it = NSMenuItem(title: "\(thr)%", action: #selector(setAlertOption(_:)), keyEquivalent: "")
+            it.target = self; it.tag = thr
+            it.state = (alertsEnabled && alertThreshold == thr) ? .on : .off
+            sub.addItem(it)
+        }
+        alertsItem.submenu = sub
+        menu.addItem(alertsItem)
         addCheck(menu, "Start at login", #selector(toggleStartAtLogin), on: startAtLoginEnabled)
         menu.addItem(.separator())
+        add(menu, "About (v\(appVersion))", #selector(openAbout), key: "")
         add(menu, "Quit", #selector(quit), key: "q")
     }
 
@@ -390,7 +452,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(it)
     }
 
-    func menuWillOpen(_ menu: NSMenu) { refresh() }
+    func menuWillOpen(_ menu: NSMenu) { menuOpen = true; refresh() }
+    func menuDidClose(_ menu: NSMenu) { menuOpen = false; updateStatusItem() }
 
     // MARK: - Actions
     @objc private func refreshNow() {
@@ -415,11 +478,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         pb.clearContents()
         pb.setString(str, forType: .string)
     }
-    @objc private func toggleAlerts() {
-        alertsEnabled.toggle()
+    @objc private func setAlertOption(_ sender: NSMenuItem) {
+        if sender.tag == 0 {
+            alertsEnabled = false
+        } else {
+            alertsEnabled = true
+            alertThreshold = sender.tag
+            sessionAlerted = false; weeklyAlerted = false
+            requestNotificationAuth()
+        }
         UserDefaults.standard.set(alertsEnabled, forKey: "usageAlerts")
-        if alertsEnabled { requestNotificationAuth() }
+        UserDefaults.standard.set(alertThreshold, forKey: "alertThreshold")
         rebuildMenu(lastGood)
+    }
+    @objc private func toggleCompact() {
+        compactEnabled.toggle()
+        UserDefaults.standard.set(compactEnabled, forKey: "compactMode")
+        updateStatusItem()
+        rebuildMenu(lastGood)
+    }
+    @objc private func openAbout() {
+        if let url = URL(string: repoURL) { NSWorkspace.shared.open(url) }
     }
     @objc private func toggleStartAtLogin() {
         startAtLoginEnabled.toggle()
