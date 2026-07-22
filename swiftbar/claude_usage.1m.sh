@@ -49,12 +49,17 @@ remaining() {
   yr="$("${dpfx[@]}" date +%Y)"
   epoch="$("${dpfx[@]}" date -j -f "$fmt" "$body $yr" +%s 2>/dev/null)" || { echo ""; return; }
   now="$(date +%s)"
-  # Year boundary: if the parsed value is in the past, recompute for next year
-  if (( epoch < now )); then
+  # Roll to next year only for the Dec->Jan boundary (far in the past, >40 days),
+  # not for a reset that just elapsed a few minutes ago (which would wrongly show ~364d).
+  if (( epoch < now - 3456000 )); then
     epoch="$("${dpfx[@]}" date -j -f "$fmt" "$body $((yr+1))" +%s 2>/dev/null)" || { echo ""; return; }
   fi
   local diff=$(( epoch - now ))
-  (( diff <= 0 )) && { echo "resets soon"; return; }
+  # Brief reset window: just elapsed / about to elapse / implausibly large (mid-reset parse).
+  if (( diff <= 30 || diff > 691200 )); then
+    [[ "$style" == short ]] && echo "resetting" || echo "resetting…"
+    return
+  fi
   local d=$(( diff/86400 )) h=$(( (diff%86400)/3600 )) m=$(( (diff%3600)/60 ))
   if [[ "$style" == short ]]; then
     if   (( d > 0 )); then echo "${d}d${h}h"
@@ -83,7 +88,11 @@ WREM="$(remaining "$WR" long)"    # weekly remaining
 
 # Menu bar line (colored by session %). s = session (5-hour rolling), w = weekly
 BAR="s${S}% · w${W}%"
-[[ -n "$SREMC" ]] && BAR="$BAR · ⏳${SREMC}"
+if [[ "$SREMC" == "resetting" ]]; then
+  BAR="$BAR · ↻ resetting"
+elif [[ -n "$SREMC" ]]; then
+  BAR="$BAR · ⏳${SREMC}"
+fi
 BARCOLOR="$(color_for "$S")"
 if [[ -n "$BARCOLOR" ]]; then
   echo "$BAR | color=$BARCOLOR"

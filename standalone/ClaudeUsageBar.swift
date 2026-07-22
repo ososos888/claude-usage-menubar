@@ -9,6 +9,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var timer: Timer?
     private let jsonURL = URL(fileURLWithPath: NSString(string: "~/.claude-usage/usage.json").expandingTildeInPath)
     private let collectPath = NSString(string: "~/.claude-usage/collect.sh").expandingTildeInPath
+    private var lastGood: Usage?                 // keep last successful read to avoid flicker
+    private let sessionMax = 6 * 3600            // session window is 5h; treat >6h as a mid-reset artifact
+    private let weeklyMax  = 8 * 86400           // weekly window is 7d; treat >8d as a mid-reset artifact
 
     struct Usage {
         var sessionPct: Int?; var sessionReset: String?; var sessionEpoch: Double?
@@ -44,20 +47,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return u
     }
 
-    private func remaining(_ epoch: Double?, short: Bool) -> String? {
+    // Human-readable time until reset. `resetting` is true during the brief reset window:
+    // just elapsed, about to elapse, or an implausibly large value from a mid-reset parse.
+    private struct Remain { let text: String; let resetting: Bool }
+    private func remaining(_ epoch: Double?, maxSeconds: Int, short: Bool) -> Remain? {
         guard let e = epoch else { return nil }
         let diff = Int(e - Date().timeIntervalSince1970)
-        if diff <= 0 { return short ? "0m" : "resets soon" }
-        let d = diff / 86400, h = (diff % 86400) / 3600, m = (diff % 3600) / 60
-        if short {
-            if d > 0 { return "\(d)d\(h)h" }
-            if h > 0 { return "\(h)h\(m)m" }
-            return "\(m)m"
-        } else {
-            if d > 0 { return "\(d)d \(h)h left" }
-            if h > 0 { return "\(h)h \(m)m left" }
-            return "\(m)m left"
+        if diff <= 30 || diff > maxSeconds {
+            return Remain(text: short ? "resetting" : "resetting…", resetting: true)
         }
+        let d = diff / 86400, h = (diff % 86400) / 3600, m = (diff % 3600) / 60
+        let text: String
+        if short {
+            if d > 0 { text = "\(d)d\(h)h" }
+            else if h > 0 { text = "\(h)h\(m)m" }
+            else { text = "\(m)m" }
+        } else {
+            if d > 0 { text = "\(d)d \(h)h left" }
+            else if h > 0 { text = "\(h)h \(m)m left" }
+            else { text = "\(m)m left" }
+        }
+        return Remain(text: text, resetting: false)
     }
 
     private func color(forPct p: Int?) -> NSColor? {
@@ -69,7 +79,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Render
     private func refresh() {
-        guard let u = load() else {
+        if let fresh = load() { lastGood = fresh }  // reuse last good on a transient read failure
+        guard let u = lastGood else {
             setTitle("Claude --", color: .systemRed)
             rebuildMenu(nil)
             return
@@ -77,7 +88,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let s = u.sessionPct.map(String.init) ?? "?"
         let w = u.weeklyPct.map(String.init) ?? "?"
         var title = "s\(s)% · w\(w)%"  // s = session (5-hour rolling), w = weekly
-        if let rem = remaining(u.sessionEpoch, short: true) { title += " · ⏳\(rem)" }
+        if let r = remaining(u.sessionEpoch, maxSeconds: sessionMax, short: true) {
+            title += r.resetting ? " · ↻ \(r.text)" : " · ⏳\(r.text)"
+        }
         setTitle(title, color: color(forPct: u.sessionPct))
         rebuildMenu(u)
     }
@@ -100,10 +113,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let u = u {
             if let err = u.error { info("⚠️ Last update failed: \(err) (showing last good values)") }
             let s = u.sessionPct.map(String.init) ?? "?"
-            let sRem = remaining(u.sessionEpoch, short: false) ?? "resets \(u.sessionReset ?? "?")"
+            let sRem = remaining(u.sessionEpoch, maxSeconds: sessionMax, short: false)?.text ?? "resets \(u.sessionReset ?? "?")"
             info("Session: \(s)% used · \(sRem)")
             let w = u.weeklyPct.map(String.init) ?? "?"
-            let wRem = remaining(u.weeklyEpoch, short: false) ?? "resets \(u.weeklyReset ?? "?")"
+            let wRem = remaining(u.weeklyEpoch, maxSeconds: weeklyMax, short: false)?.text ?? "resets \(u.weeklyReset ?? "?")"
             info("Weekly (all models): \(w)% used · \(wRem)")
             if let ml = u.modelLabel, let mp = u.modelPct { info("Weekly (\(ml)): \(mp)%") }
             menu.addItem(.separator())

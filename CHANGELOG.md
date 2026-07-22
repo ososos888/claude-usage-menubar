@@ -11,6 +11,13 @@ All notable changes to this project are documented here. This project adheres to
 - `uninstall.sh`: guarded uninstaller (path guards, confirmation prompt, `--dry-run`
   and `-y` flags) that removes only what this project installs; never touches SwiftBar.
 
+### Fixed
+- Session reset window no longer shows a nonsensical "364d23h" (and no red "Claude --"
+  flash): during the brief reset window the widget now shows "↻ resetting". Root cause
+  was over-eager year rollover in `collect.sh` — it now only rolls to next year for the
+  Dec->Jan boundary (>40 days in the past), not for a reset that just elapsed. The app
+  also reuses the last good values on a transient read failure.
+
 ## [1.0.0] - 2026-07-21
 
 ### Added

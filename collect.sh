@@ -36,7 +36,9 @@ to_epoch() {
   yr="$("${pfx[@]}" date +%Y)"
   ep="$("${pfx[@]}" date -j -f "$fmt" "$body $yr" +%s 2>/dev/null)" || { echo ""; return; }
   now="$(date +%s)"
-  (( ep < now )) && ep="$("${pfx[@]}" date -j -f "$fmt" "$body $((yr+1))" +%s 2>/dev/null)"
+  # Roll to next year only for the Dec->Jan boundary (time far in the past, >40 days),
+  # NOT for a reset that just elapsed a few minutes ago (which would wrongly show ~364d).
+  (( ep < now - 3456000 )) && ep="$("${pfx[@]}" date -j -f "$fmt" "$body $((yr+1))" +%s 2>/dev/null)"
   echo "${ep:-}"
 }
 
