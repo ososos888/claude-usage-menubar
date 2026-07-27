@@ -4,6 +4,17 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.1] - 2026-07-27
+
+### Changed
+- Split the single 640-line source into focused files: `UsageLogic.swift` (pure,
+  UI-free logic), `HourglassIcon.swift` (icon drawing), `AppDelegate.swift` (controller),
+  `main.swift` (entry). `build.sh` now compiles `standalone/*.swift`. No behavior change.
+
+### Added
+- Unit tests for the pure logic in `tests/` (parsing, remaining-time formatting, color
+  thresholds, version compare, staleness), run with `./tests/run.sh` via plain `swiftc`.
+
 ## [1.3.0] - 2026-07-27
 
 ### Added
@@ -112,6 +123,7 @@ All notable changes to this project are documented here. This project adheres to
 - Color thresholds in the menu bar (80%+ red, 60%+ orange).
 - Optional SwiftBar plugin (`swiftbar/claude_usage.1m.sh`) for users who prefer SwiftBar.
 
+[1.3.1]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.3.1
 [1.3.0]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.3.0
 [1.2.5]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.2.5
 [1.2.4]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.2.4

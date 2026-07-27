@@ -1,7 +1,7 @@
-// ClaudeUsageBar — a single native menu bar app that works without SwiftBar.
+// ClaudeUsageBar — a native menu bar app that works without SwiftBar.
 // It only reads ~/.claude-usage/usage.json (refreshed by the launchd daemon collect.sh)
-// and renders it in the menu bar. Reading a local file only, it triggers virtually no
-// macOS permission prompts.
+// and renders it in the menu bar. Pure logic lives in UsageLogic.swift; the hourglass
+// drawing in HourglassIcon.swift; the app entry point in main.swift.
 import Cocoa
 import UserNotifications
 
@@ -33,17 +33,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var alertThreshold = UserDefaults.standard.object(forKey: "alertThreshold") as? Int ?? 80
     private var sessionAlerted = false
     private var weeklyAlerted = false
-    // Emphasize (red) when the session is about to reset.
-    private let imminentSeconds = 15 * 60
     // Auto-start at login is driven by the launchd agent; toggle enables/disables it.
     private let agentLabel = "com.ososos888.claudeusagebar"
     private lazy var startAtLoginEnabled: Bool = queryStartAtLogin()
 
     // Compact mode: show only the session item to save menu bar width.
     private var compactEnabled = UserDefaults.standard.bool(forKey: "compactMode")
-    // Stale detection: if the collector hasn't updated checked_at in this long, dim + warn.
-    private let iso = ISO8601DateFormatter()
-    private let staleSeconds: Double = 180
     // While the menu is open the status button is highlighted; drop explicit colors then so
     // the text inverts properly on the blue highlight.
     private var menuOpen = false
@@ -51,13 +46,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let latestReleaseAPI = "https://api.github.com/repos/ososos888/claude-usage-menubar/releases/latest"
     private var appVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?" }
     private var repoPath: String? { Bundle.main.object(forInfoDictionaryKey: "SourceRepoPath") as? String }
-
-    struct Usage {
-        var sessionPct: Int?; var sessionReset: String?; var sessionEpoch: Double?
-        var weeklyPct: Int?;  var weeklyReset: String?;  var weeklyEpoch: Double?
-        var modelLabel: String?; var modelPct: Int?
-        var error: String?; var collectedAt: String?; var checkedAt: String?
-    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -81,47 +69,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Data
     private func load() -> Usage? {
-        guard let data = try? Data(contentsOf: jsonURL),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        func int(_ k: String) -> Int? { (obj[k] as? Int) ?? (obj[k] as? Double).map { Int($0) } }
-        func str(_ k: String) -> String? { obj[k] as? String }
-        func dbl(_ k: String) -> Double? { (obj[k] as? Double) ?? (obj[k] as? Int).map { Double($0) } }
-        var u = Usage()
-        u.sessionPct = int("session_pct"); u.sessionReset = str("session_reset"); u.sessionEpoch = dbl("session_reset_epoch")
-        u.weeklyPct = int("weekly_all_pct"); u.weeklyReset = str("weekly_all_reset"); u.weeklyEpoch = dbl("weekly_all_reset_epoch")
-        u.modelLabel = str("weekly_model_label"); u.modelPct = int("weekly_model_pct")
-        u.error = str("error"); u.collectedAt = str("collected_at"); u.checkedAt = str("checked_at")
-        return u
+        guard let data = try? Data(contentsOf: jsonURL) else { return nil }
+        return Usage.parse(data)
     }
 
-    // Human-readable time until reset. `resetting` is true during the brief reset window:
-    // just elapsed, about to elapse, or an implausibly large value from a mid-reset parse.
-    private struct Remain { let text: String; let resetting: Bool }
-    private func remaining(_ epoch: Double?, maxSeconds: Int, short: Bool) -> Remain? {
-        guard let e = epoch else { return nil }
-        let diff = Int(e - Date().timeIntervalSince1970)
-        if diff <= 30 || diff > maxSeconds {
-            return Remain(text: short ? "resetting" : "resetting…", resetting: true)
+    // Map a severity level to a menu bar color (nil = default/adaptive).
+    private func nsColor(_ level: UsageLevel) -> NSColor? {
+        switch level {
+        case .normal: return nil
+        case .warn: return .systemOrange
+        case .critical: return .systemRed
         }
-        let d = diff / 86400, h = (diff % 86400) / 3600, m = (diff % 3600) / 60
-        let text: String
-        if short {
-            if d > 0 { text = "\(d)d\(h)h" }
-            else if h > 0 { text = "\(h)h\(m)m" }
-            else { text = "\(m)m" }
-        } else {
-            if d > 0 { text = "\(d)d \(h)h left" }
-            else if h > 0 { text = "\(h)h \(m)m left" }
-            else { text = "\(m)m left" }
-        }
-        return Remain(text: text, resetting: false)
-    }
-
-    private func color(forPct p: Int?) -> NSColor? {
-        guard let p = p else { return nil }
-        if p >= 80 { return .systemRed }
-        if p >= 60 { return .systemOrange }
-        return nil
     }
 
     // MARK: - Render
@@ -156,7 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
-        let resetting = remaining(u.sessionEpoch, maxSeconds: sessionMax, short: true)?.resetting ?? false
+        let resetting = remainingTime(epoch: u.sessionEpoch, maxSeconds: sessionMax, short: true)?.resetting ?? false
         if animationsEnabled && resetting { startSpinner() } else { stopSpinner() }
         if changed { pulse() }
 
@@ -168,40 +126,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func toolTipText(_ u: Usage) -> String {
         var lines: [String] = []
         let s = u.sessionPct.map(String.init) ?? "?"
-        let sRem = remaining(u.sessionEpoch, maxSeconds: sessionMax, short: false)?.text ?? "resets \(u.sessionReset ?? "?")"
+        let sRem = remainingTime(epoch: u.sessionEpoch, maxSeconds: sessionMax, short: false)?.text ?? "resets \(u.sessionReset ?? "?")"
         lines.append("Session: \(s)% used · \(sRem)")
         let w = u.weeklyPct.map(String.init) ?? "?"
-        let wRem = remaining(u.weeklyEpoch, maxSeconds: weeklyMax, short: false)?.text ?? "resets \(u.weeklyReset ?? "?")"
+        let wRem = remainingTime(epoch: u.weeklyEpoch, maxSeconds: weeklyMax, short: false)?.text ?? "resets \(u.weeklyReset ?? "?")"
         lines.append("Weekly (all models): \(w)% used · \(wRem)")
         if let ml = u.modelLabel, let mp = u.modelPct { lines.append("Weekly (\(ml)): \(mp)%") }
         if let ca = u.collectedAt { lines.append("Updated: \(ca)") }
-        if isStale(u) { lines.append("⚠ Data may be stale — the collector daemon may have stopped.") }
+        if isStale(checkedAt: u.checkedAt) { lines.append("⚠ Data may be stale — the collector daemon may have stopped.") }
         return lines.joined(separator: "\n")
     }
 
-    private func epoch(fromISO s: String?) -> Double? {
-        guard let s = s, let d = iso.date(from: s) else { return nil }
-        return d.timeIntervalSince1970
-    }
-    private func isStale(_ u: Usage) -> Bool {
-        guard let e = epoch(fromISO: u.checkedAt) else { return false }
-        return Date().timeIntervalSince1970 - e > staleSeconds
-    }
     private func accessibilityText(_ u: Usage) -> String {
         let s = u.sessionPct.map(String.init) ?? "unknown"
         let w = u.weeklyPct.map(String.init) ?? "unknown"
         var t = "Claude usage. Session \(s) percent. Weekly \(w) percent."
-        if let r = remaining(u.sessionEpoch, maxSeconds: sessionMax, short: false) {
+        if let r = remainingTime(epoch: u.sessionEpoch, maxSeconds: sessionMax, short: false) {
             t += r.resetting ? " Session resetting." : " Session \(r.text)."
         }
-        if isStale(u) { t += " Data may be stale." }
+        if isStale(checkedAt: u.checkedAt) { t += " Data may be stale." }
         return t
     }
 
     // Renders the menu bar from lastGood. Used by refresh() and the spinner tick.
-    // With animations on: a drawn hourglass icon whose sand reflects session time left
-    //   (stepped ~hourly), a spinner while resetting, and a pulse on value change.
-    // With animations off: the plain ⏳/↻ emoji, no motion.
     private func updateStatusItem() {
         guard let button = statusItem.button else { return }
         if flipTimer != nil { return }  // a refresh flip owns the icon until it finishes
@@ -209,19 +156,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let s = u.sessionPct.map(String.init) ?? "?"
         let w = u.weeklyPct.map(String.init) ?? "?"
         // Stale data (collector stopped): dim and mark, don't imply the old numbers are live.
-        if isStale(u) {
+        if isStale(checkedAt: u.checkedAt) {
             button.image = nil
             let body = compactEnabled ? "⚠ s\(s)%" : "⚠ s\(s)% · w\(w)%"
             setSegments([(body, .secondaryLabelColor)])
             return
         }
         // Each item is colored by its own state (session %, weekly %, time-left).
-        var segs: [(String, NSColor?)] = [("s\(s)%", color(forPct: u.sessionPct))]
+        var segs: [(String, NSColor?)] = [("s\(s)%", nsColor(level(forPct: u.sessionPct)))]
         if !compactEnabled {
             segs.append((" · ", nil))
-            segs.append(("w\(w)%", color(forPct: u.weeklyPct)))
+            segs.append(("w\(w)%", nsColor(level(forPct: u.weeklyPct))))
         }
-        let r = remaining(u.sessionEpoch, maxSeconds: sessionMax, short: true)
+        let r = remainingTime(epoch: u.sessionEpoch, maxSeconds: sessionMax, short: true)
         if let r = r, r.resetting {
             if animationsEnabled {
                 button.imagePosition = .imageTrailing   // the spinner timer drives the rotating icon
@@ -236,67 +183,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             button.imagePosition = .imageTrailing
             button.imageHugsTitle = true
             segs.append((" · ", nil))
-            segs.append((r.text, timeColor(u.sessionEpoch)))
+            segs.append((r.text, nsColor(timeLevel(epoch: u.sessionEpoch))))
         } else if let r = r {
             button.image = nil
             segs.append((" · ⏳", nil))
-            segs.append((r.text, timeColor(u.sessionEpoch)))
+            segs.append((r.text, nsColor(timeLevel(epoch: u.sessionEpoch))))
         } else {
             button.image = nil
         }
         setSegments(segs)
-    }
-
-    // Color for the time-left item: orange within 60 min of reset, red within 15 min.
-    private func timeColor(_ epoch: Double?) -> NSColor? {
-        guard let e = epoch else { return nil }
-        let diff = Int(e - Date().timeIntervalSince1970)
-        if diff <= 30 { return nil }                 // resetting is handled elsewhere
-        if diff <= imminentSeconds { return .systemRed }
-        if diff <= 60 * 60 { return .systemOrange }
-        return nil
-    }
-
-    // A template hourglass image; sand level = remaining/window, quantized to whole hours
-    // so it visibly changes about once per hour.
-    //   scaleY — flip about the horizontal axis (1 upright, 0 edge-on, -1 upside down).
-    //   angle  — true rotation (for the resetting spinner).
-    //   spinning — draw in a square canvas so rotation never clips and the width stays fixed.
-    private func hourglassImage(remaining: Int, windowHours: Int,
-                                scaleY: CGFloat = 1, angle: CGFloat = 0, spinning: Bool = false) -> NSImage {
-        let hoursLeft = max(0, Int(ceil(Double(remaining) / 3600.0)))
-        let frac = min(1.0, Double(min(hoursLeft, windowHours)) / Double(max(1, windowHours)))
-        let bw: CGFloat = 11, bh: CGFloat = 15, line: CGFloat = 1.1
-        let size = spinning ? NSSize(width: 21, height: 21) : NSSize(width: bw, height: bh)
-        let img = NSImage(size: size)
-        img.lockFocus()
-        defer { img.unlockFocus(); img.isTemplate = true }
-        guard let ctx = NSGraphicsContext.current?.cgContext else { return img }
-        // Transform about the canvas center: rotate, then vertical scale (flip).
-        ctx.translateBy(x: size.width / 2, y: size.height / 2)
-        if angle != 0 { ctx.rotate(by: angle) }
-        if scaleY != 1 { ctx.scaleBy(x: 1, y: scaleY == 0 ? 0.001 : scaleY) }
-        ctx.translateBy(x: -size.width / 2, y: -size.height / 2)
-        // Hourglass geometry inside its bw×bh box, centered in the (possibly square) canvas.
-        let ox = (size.width - bw) / 2, oy = (size.height - bh) / 2, p = line + 0.5
-        let cx = ox + bw / 2, cy = oy + bh / 2, topY = oy + bh - p, botY = oy + p, capL = ox + p, capR = ox + bw - p
-        NSColor.black.setStroke(); NSColor.black.setFill()
-        let top = NSBezierPath()
-        top.move(to: NSPoint(x: capL, y: topY)); top.line(to: NSPoint(x: capR, y: topY)); top.line(to: NSPoint(x: cx, y: cy)); top.close()
-        let bot = NSBezierPath()
-        bot.move(to: NSPoint(x: capL, y: botY)); bot.line(to: NSPoint(x: capR, y: botY)); bot.line(to: NSPoint(x: cx, y: cy)); bot.close()
-        ctx.saveGState(); top.addClip()
-        NSBezierPath(rect: NSRect(x: ox, y: cy, width: bw, height: CGFloat(frac) * (topY - cy))).fill()
-        ctx.restoreGState()
-        ctx.saveGState(); bot.addClip()
-        NSBezierPath(rect: NSRect(x: ox, y: botY, width: bw, height: CGFloat(1 - frac) * (cy - botY))).fill()
-        ctx.restoreGState()
-        top.lineWidth = line; top.stroke(); bot.lineWidth = line; bot.stroke()
-        let caps = NSBezierPath(); caps.lineWidth = line
-        caps.move(to: NSPoint(x: capL - line / 2, y: topY)); caps.line(to: NSPoint(x: capR + line / 2, y: topY))
-        caps.move(to: NSPoint(x: capL - line / 2, y: botY)); caps.line(to: NSPoint(x: capR + line / 2, y: botY))
-        caps.stroke()
-        return img
     }
 
     // Spinner: smoothly rotate the hourglass icon while resetting (fixed-size square canvas,
@@ -307,7 +202,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self = self, let btn = self.statusItem.button else { return }
             self.spinFrame &+= 1
             let angle = 2 * CGFloat.pi * CGFloat(self.spinFrame % 40) / 40  // ~2s per revolution
-            btn.image = self.hourglassImage(remaining: 0, windowHours: 5, angle: angle, spinning: true)
+            btn.image = hourglassImage(remaining: 0, windowHours: 5, angle: angle, spinning: true)
             btn.imagePosition = .imageTrailing
         }
         RunLoop.main.add(t, forMode: .common)
@@ -336,7 +231,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func flipRefreshIcon() {
         guard animationsEnabled, statusItem.button != nil,
               let u = lastGood, let epoch = u.sessionEpoch,
-              !(remaining(u.sessionEpoch, maxSeconds: sessionMax, short: true)?.resetting ?? false)
+              !(remainingTime(epoch: u.sessionEpoch, maxSeconds: sessionMax, short: true)?.resetting ?? false)
         else { return }
         let diff = Int(epoch - Date().timeIntervalSince1970)
         flipTimer?.invalidate()
@@ -350,7 +245,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 return
             }
             let sy = cos(2 * CGFloat.pi * CGFloat(self.flipFrame) / CGFloat(self.flipFrames))
-            btn.image = self.hourglassImage(remaining: diff, windowHours: 5, scaleY: sy)
+            btn.image = hourglassImage(remaining: diff, windowHours: 5, scaleY: sy)
             btn.imagePosition = .imageTrailing
         }
         RunLoop.main.add(t, forMode: .common)
@@ -450,10 +345,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let u = u {
             if let err = u.error { info("⚠️ Last update failed: \(err) (showing last good values)") }
             let s = u.sessionPct.map(String.init) ?? "?"
-            let sRem = remaining(u.sessionEpoch, maxSeconds: sessionMax, short: false)?.text ?? "resets \(u.sessionReset ?? "?")"
+            let sRem = remainingTime(epoch: u.sessionEpoch, maxSeconds: sessionMax, short: false)?.text ?? "resets \(u.sessionReset ?? "?")"
             info("Session: \(s)% used · \(sRem)")
             let w = u.weeklyPct.map(String.init) ?? "?"
-            let wRem = remaining(u.weeklyEpoch, maxSeconds: weeklyMax, short: false)?.text ?? "resets \(u.weeklyReset ?? "?")"
+            let wRem = remainingTime(epoch: u.weeklyEpoch, maxSeconds: weeklyMax, short: false)?.text ?? "resets \(u.weeklyReset ?? "?")"
             info("Weekly (all models): \(w)% used · \(wRem)")
             if let ml = u.modelLabel, let mp = u.modelPct { info("Weekly (\(ml)): \(mp)%") }
             menu.addItem(.separator())
@@ -529,7 +424,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let s = u.sessionPct.map(String.init) ?? "?"
         let w = u.weeklyPct.map(String.init) ?? "?"
         var str = "s\(s)% · w\(w)%"
-        if let r = remaining(u.sessionEpoch, maxSeconds: sessionMax, short: true) {
+        if let r = remainingTime(epoch: u.sessionEpoch, maxSeconds: sessionMax, short: true) {
             str += r.resetting ? " · resetting" : " · \(r.text)"
         }
         let pb = NSPasteboard.general
@@ -607,15 +502,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             alert.runModal()
         }
     }
-    private func compareVersions(_ a: String, _ b: String) -> Int {
-        let pa = a.split(separator: ".").map { Int($0) ?? 0 }
-        let pb = b.split(separator: ".").map { Int($0) ?? 0 }
-        for i in 0 ..< max(pa.count, pb.count) {
-            let x = i < pa.count ? pa[i] : 0, y = i < pb.count ? pb[i] : 0
-            if x != y { return x < y ? -1 : 1 }
-        }
-        return 0
-    }
     @objc private func toggleStartAtLogin() {
         startAtLoginEnabled.toggle()
         setStartAtLogin(startAtLoginEnabled)
@@ -630,9 +516,3 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc private func quit() { NSApp.terminate(nil) }
 }
-
-let app = NSApplication.shared
-app.setActivationPolicy(.accessory) // Menu-bar only, no Dock icon
-let delegate = AppDelegate()
-app.delegate = delegate
-app.run()

@@ -7,13 +7,13 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"     # source repo root, embedded so the app can self-update
 APPNAME="ClaudeUsageBar"
 BUNDLE_ID="com.ososos888.claudeusagebar"
-VERSION="1.3.0"
+VERSION="1.3.1"
 APPDIR="$HOME/Applications/$APPNAME.app"
 PLIST="$HOME/Library/LaunchAgents/$BUNDLE_ID.plist"
 
 echo "==> Compiling Swift"
 BIN="$(mktemp -d)/$APPNAME"
-swiftc -O -o "$BIN" "$HERE/ClaudeUsageBar.swift" -framework Cocoa
+swiftc -O -o "$BIN" "$HERE"/*.swift -framework Cocoa
 
 echo "==> Creating app bundle: $APPDIR"
 rm -rf "$APPDIR"

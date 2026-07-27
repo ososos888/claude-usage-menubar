@@ -73,8 +73,9 @@ cd claude-usage-menubar
 |---|---|
 | `collect.sh` | Parses `/usage` output into `~/.claude-usage/usage.json` (including reset epochs). Keeps the last good values on failure |
 | `com.user.claude-usage.plist` | launchd agent. Runs `collect.sh` every minute; starts at login |
-| `standalone/ClaudeUsageBar.swift` | Native menu bar app source (`NSStatusItem`). Reads the cache JSON, renders it, computes remaining time live |
-| `standalone/build.sh` | Builds the app → `~/Applications/ClaudeUsageBar.app` → registers launchd auto-start |
+| `standalone/*.swift` | App source, split by concern: `UsageLogic.swift` (pure logic), `HourglassIcon.swift` (icon drawing), `AppDelegate.swift` (controller), `main.swift` (entry) |
+| `standalone/build.sh` | Compiles `standalone/*.swift` → `~/Applications/ClaudeUsageBar.app` → registers launchd auto-start |
+| `tests/run.sh` | Unit tests for the pure logic (plain `swiftc`, no XCTest/SPM) |
 | `uninstall.sh` | Removes the agents, app, and data dir (guarded; supports `--dry-run` / `-y`) |
 | `update.command` | Double-clickable updater (`git pull` + rebuild); also used by in-app "Check for Updates" |
 | `swiftbar/claude_usage.1m.sh` | (Optional) plugin alternative if you prefer SwiftBar |
@@ -87,6 +88,17 @@ cd claude-usage-menubar
 - **Animations**: toggle from the menu ("Animations", persisted across launches). When on, the icon is a drawn hourglass whose sand tracks session time left (stepped ~hourly), spins while a session is resetting, flips one full turn when you hit "Refresh now", and the text pulses when a percentage changes. When off, a plain ⏳/↻ emoji with no motion.
 
 After editing, run `./standalone/build.sh` to rebuild and apply immediately.
+
+## Tests
+
+The pure logic (JSON parsing, remaining-time formatting, color thresholds, version
+compare, staleness) lives in `standalone/UsageLogic.swift` and is covered by unit tests:
+
+```bash
+./tests/run.sh
+```
+
+It compiles the logic with plain `swiftc` (no XCTest/SPM) and exits non-zero on failure.
 
 ## Uninstall
 
@@ -114,7 +126,7 @@ rm -rf ~/Applications/ClaudeUsageBar.app ~/.claude-usage
 
 ## Versioning
 
-This project follows [Semantic Versioning](https://semver.org/). See [CHANGELOG.md](CHANGELOG.md). Current version: **1.3.0**.
+This project follows [Semantic Versioning](https://semver.org/). See [CHANGELOG.md](CHANGELOG.md). Current version: **1.3.1**.
 
 ## License
 
