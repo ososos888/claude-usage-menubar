@@ -4,9 +4,10 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$HERE/.." && pwd)"     # source repo root, embedded so the app can self-update
 APPNAME="ClaudeUsageBar"
 BUNDLE_ID="com.ososos888.claudeusagebar"
-VERSION="1.2.5"
+VERSION="1.3.0"
 APPDIR="$HOME/Applications/$APPNAME.app"
 PLIST="$HOME/Library/LaunchAgents/$BUNDLE_ID.plist"
 
@@ -35,9 +36,12 @@ cat > "$APPDIR/Contents/Info.plist" <<EOF
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>LSUIElement</key><true/>
   <key>NSHumanReadableCopyright</key><string>MIT</string>
+  <key>SourceRepoPath</key><string>$REPO</string>
 </dict>
 </plist>
 EOF
+
+chmod +x "$REPO/update.command" 2>/dev/null || true
 
 # Remove the quarantine attribute so Gatekeeper doesn't block the locally built binary.
 xattr -dr com.apple.quarantine "$APPDIR" 2>/dev/null || true

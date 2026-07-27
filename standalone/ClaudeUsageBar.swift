@@ -48,7 +48,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // the text inverts properly on the blue highlight.
     private var menuOpen = false
     private let repoURL = "https://github.com/ososos888/claude-usage-menubar"
+    private let latestReleaseAPI = "https://api.github.com/repos/ososos888/claude-usage-menubar/releases/latest"
     private var appVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?" }
+    private var repoPath: String? { Bundle.main.object(forInfoDictionaryKey: "SourceRepoPath") as? String }
 
     struct Usage {
         var sessionPct: Int?; var sessionReset: String?; var sessionEpoch: Double?
@@ -481,6 +483,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(alertsItem)
         addCheck(menu, "Start at login", #selector(toggleStartAtLogin), on: startAtLoginEnabled)
         menu.addItem(.separator())
+        add(menu, "Check for Updates…", #selector(checkForUpdates), key: "")
         add(menu, "About (v\(appVersion))", #selector(openAbout), key: "")
         add(menu, "Quit", #selector(quit), key: "q")
     }
@@ -554,6 +557,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc private func openAbout() {
         if let url = URL(string: repoURL) { NSWorkspace.shared.open(url) }
+    }
+    // MARK: - Update
+    @objc private func checkForUpdates() {
+        guard let url = URL(string: latestReleaseAPI) else { return }
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        req.setValue("ClaudeUsageBar", forHTTPHeaderField: "User-Agent")
+        URLSession.shared.dataTask(with: req) { [weak self] data, _, err in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard let data = data,
+                      let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let tag = obj["tag_name"] as? String else {
+                    self.updateAlert(latest: nil, message: err?.localizedDescription ?? "Could not reach GitHub.")
+                    return
+                }
+                self.updateAlert(latest: tag.trimmingCharacters(in: CharacterSet(charactersIn: "v")), message: nil)
+            }
+        }.resume()
+    }
+    private func updateAlert(latest: String?, message: String?) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        if let message = message {
+            alert.messageText = "Update check failed"
+            alert.informativeText = message
+            alert.addButton(withTitle: "OK")
+            alert.runModal(); return
+        }
+        let latestV = latest ?? "", cur = appVersion
+        let updatePath = repoPath.map { $0 + "/update.command" }
+        if compareVersions(latestV, cur) > 0, let path = updatePath, FileManager.default.fileExists(atPath: path) {
+            alert.messageText = "Update available"
+            alert.informativeText = "v\(latestV) is available (you have v\(cur)).\nUpdate now? A Terminal window will pull the latest and rebuild; the app restarts automatically."
+            alert.addButton(withTitle: "Update"); alert.addButton(withTitle: "Later")
+            if alert.runModal() == .alertFirstButtonReturn {
+                let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/open"); p.arguments = [path]
+                try? p.run()
+            }
+        } else if compareVersions(latestV, cur) > 0 {
+            alert.messageText = "Update available (v\(latestV))"
+            alert.informativeText = "You have v\(cur). Update manually:\n  git pull && ./standalone/build.sh"
+            alert.addButton(withTitle: "Open project page"); alert.addButton(withTitle: "OK")
+            if alert.runModal() == .alertFirstButtonReturn { openAbout() }
+        } else {
+            alert.messageText = "You're up to date"
+            alert.informativeText = "ClaudeUsageBar v\(cur) is the latest version."
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        }
+    }
+    private func compareVersions(_ a: String, _ b: String) -> Int {
+        let pa = a.split(separator: ".").map { Int($0) ?? 0 }
+        let pb = b.split(separator: ".").map { Int($0) ?? 0 }
+        for i in 0 ..< max(pa.count, pb.count) {
+            let x = i < pa.count ? pa[i] : 0, y = i < pb.count ? pb[i] : 0
+            if x != y { return x < y ? -1 : 1 }
+        }
+        return 0
     }
     @objc private func toggleStartAtLogin() {
         startAtLoginEnabled.toggle()

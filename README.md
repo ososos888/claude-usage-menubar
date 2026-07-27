@@ -34,6 +34,7 @@ Extras (all lightweight, from the menu):
 - **Compact mode** — show only the session item to save menu bar width.
 - **Stale indicator** — if the collector daemon stops updating, the text dims and shows ⚠.
 - **Start at login** — toggle auto-start (backed by the launchd agent).
+- **Check for updates** — compares against the latest GitHub release; if newer, one click opens a Terminal that pulls the latest source and rebuilds (the app restarts itself).
 - **About** — opens the project page and shows the version.
 - **VoiceOver** — the icon exposes the full status as an accessibility label.
 
@@ -75,6 +76,7 @@ cd claude-usage-menubar
 | `standalone/ClaudeUsageBar.swift` | Native menu bar app source (`NSStatusItem`). Reads the cache JSON, renders it, computes remaining time live |
 | `standalone/build.sh` | Builds the app → `~/Applications/ClaudeUsageBar.app` → registers launchd auto-start |
 | `uninstall.sh` | Removes the agents, app, and data dir (guarded; supports `--dry-run` / `-y`) |
+| `update.command` | Double-clickable updater (`git pull` + rebuild); also used by in-app "Check for Updates" |
 | `swiftbar/claude_usage.1m.sh` | (Optional) plugin alternative if you prefer SwiftBar |
 
 ## Customizing
@@ -112,7 +114,7 @@ rm -rf ~/Applications/ClaudeUsageBar.app ~/.claude-usage
 
 ## Versioning
 
-This project follows [Semantic Versioning](https://semver.org/). See [CHANGELOG.md](CHANGELOG.md). Current version: **1.2.5**.
+This project follows [Semantic Versioning](https://semver.org/). See [CHANGELOG.md](CHANGELOG.md). Current version: **1.3.0**.
 
 ## License
 

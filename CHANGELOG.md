@@ -4,6 +4,14 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.0] - 2026-07-27
+
+### Added
+- "Check for Updates…" menu item: compares the app version against the latest GitHub
+  release and, if newer, opens a Terminal that pulls the latest source and rebuilds (the
+  app restarts itself). Uses `update.command`; the source repo path is embedded at build
+  time so the app knows where to update from.
+
 ## [1.2.5] - 2026-07-27
 
 ### Changed
@@ -104,6 +112,7 @@ All notable changes to this project are documented here. This project adheres to
 - Color thresholds in the menu bar (80%+ red, 60%+ orange).
 - Optional SwiftBar plugin (`swiftbar/claude_usage.1m.sh`) for users who prefer SwiftBar.
 
+[1.3.0]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.3.0
 [1.2.5]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.2.5
 [1.2.4]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.2.4
 [1.2.3]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.2.3
