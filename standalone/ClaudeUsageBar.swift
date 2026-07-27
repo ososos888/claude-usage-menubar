@@ -8,6 +8,7 @@ import UserNotifications
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var timer: Timer?
+    private var napActivity: NSObjectProtocol?   // opt out of App Nap so the timer keeps firing
     private let jsonURL = URL(fileURLWithPath: NSString(string: "~/.claude-usage/usage.json").expandingTildeInPath)
     private let collectPath = NSString(string: "~/.claude-usage/collect.sh").expandingTildeInPath
     private var lastGood: Usage?                 // keep last successful read to avoid flicker
@@ -60,6 +61,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         statusItem.menu = menu
         if alertsEnabled { requestNotificationAuth() }
+        // Prevent App Nap from suspending our refresh timer while the Mac is awake
+        // (idle system sleep is still allowed — we don't keep the Mac awake).
+        napActivity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiatedAllowingIdleSystemSleep], reason: "Keep menu bar usage up to date")
+        // Refresh right away when the Mac wakes (the timer alone can lag after sleep).
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(systemDidWake), name: NSWorkspace.didWakeNotification, object: nil)
         refresh()
         // Reload the file + recompute remaining time every 30s (keeps the ⏳ minute fresh).
         let t = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in self?.refresh() }
@@ -473,10 +481,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Actions
     @objc private func refreshNow() {
         flipRefreshIcon()  // immediate visual feedback
+        runCollect()
+    }
+    // Kick a background collection; refresh the display when it finishes.
+    private func runCollect() {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: collectPath)
         p.terminationHandler = { [weak self] _ in DispatchQueue.main.async { self?.refresh() } }
         try? p.run()
+    }
+    @objc private func systemDidWake() {
+        refresh()                 // show the cached values immediately
+        runCollect()              // fetch fresh (launchd can lag right after wake)
+        // The network may still be coming up — one delayed retry.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in self?.runCollect() }
     }
     @objc private func openUsage() {
         if let url = URL(string: "https://claude.ai/settings/usage") { NSWorkspace.shared.open(url) }

@@ -4,6 +4,15 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.4] - 2026-07-27
+
+### Fixed
+- Menu bar could stay stale for many minutes after the Mac woke from sleep. As a
+  background (accessory) app it was subject to App Nap, which suspended the refresh
+  timer — the collector kept the JSON fresh, but the app stopped re-reading it. The app
+  now opts out of App Nap (idle system sleep still allowed) and refreshes immediately on
+  `NSWorkspace.didWakeNotification` (with a short retry while the network comes back).
+
 ## [1.2.3] - 2026-07-22
 
 ### Fixed
@@ -87,6 +96,7 @@ All notable changes to this project are documented here. This project adheres to
 - Color thresholds in the menu bar (80%+ red, 60%+ orange).
 - Optional SwiftBar plugin (`swiftbar/claude_usage.1m.sh`) for users who prefer SwiftBar.
 
+[1.2.4]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.2.4
 [1.2.3]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.2.3
 [1.2.2]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.2.2
 [1.2.1]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.2.1
