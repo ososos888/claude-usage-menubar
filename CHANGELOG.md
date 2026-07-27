@@ -4,6 +4,14 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.3] - 2026-07-27
+
+### Changed
+- Faster display update at a session reset. The spinning icon never re-read the cache, so
+  the bar could keep spinning for up to a refresh cycle after the new window was already
+  written. The spinner now re-reads the cache ~every 1.5s (leaving "resetting" promptly),
+  and the reset poll interval dropped 8s → 5s.
+
 ## [1.3.2] - 2026-07-27
 
 ### Added
@@ -133,6 +141,7 @@ All notable changes to this project are documented here. This project adheres to
 - Color thresholds in the menu bar (80%+ red, 60%+ orange).
 - Optional SwiftBar plugin (`swiftbar/claude_usage.1m.sh`) for users who prefer SwiftBar.
 
+[1.3.3]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.3.3
 [1.3.2]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.3.2
 [1.3.1]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.3.1
 [1.3.0]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.3.0

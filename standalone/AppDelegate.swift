@@ -201,6 +201,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let t = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             guard let self = self, let btn = self.statusItem.button else { return }
             self.spinFrame &+= 1
+            // Re-read the cache ~every 1.5s so the display leaves "resetting" as soon as the
+            // new window lands in the file (the spinner alone never re-reads).
+            if self.spinFrame % 30 == 0 {
+                self.refresh()
+                if self.spinTimer == nil { return }   // reset finished → stop drawing
+            }
             let angle = 2 * CGFloat.pi * CGFloat(self.spinFrame % 40) / 40  // ~2s per revolution
             btn.image = hourglassImage(remaining: 0, windowHours: 5, angle: angle, spinning: true)
             btn.imagePosition = .imageTrailing
@@ -215,10 +221,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func startResetPolling() {
         guard resetPollTimer == nil else { return }
         resetPollCount = 0
-        let t = Timer.scheduledTimer(withTimeInterval: 8, repeats: true) { [weak self] _ in
+        let t = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             self.resetPollCount += 1
-            if self.resetPollCount > 24 { self.stopResetPolling(); return }  // safety cap (~3 min)
+            if self.resetPollCount > 40 { self.stopResetPolling(); return }  // safety cap (~3.5 min)
             self.runCollect()
         }
         RunLoop.main.add(t, forMode: .common)
