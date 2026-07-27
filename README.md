@@ -1,5 +1,7 @@
 # claude-usage-menubar
 
+[![tests](https://github.com/ososos888/claude-usage-menubar/actions/workflows/tests.yml/badge.svg)](https://github.com/ososos888/claude-usage-menubar/actions/workflows/tests.yml)
+
 A tiny native macOS menu bar app that always shows your Claude subscription (Pro/Max/Team) usage. No more opening Settings → Usage every time — see your session/weekly usage and the time left until reset at a glance.
 
 <p align="center">

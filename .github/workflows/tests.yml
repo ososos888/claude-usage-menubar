@@ -1,0 +1,16 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  logic-tests:
+    runs-on: macos-14   # GitHub-hosted macOS runner; Swift/Xcode preinstalled
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift version
+        run: swift --version
+      - name: Run unit tests
+        run: bash tests/run.sh

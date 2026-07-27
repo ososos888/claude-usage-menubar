@@ -4,6 +4,12 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- GitHub Actions CI (`.github/workflows/tests.yml`): runs the unit tests on a
+  GitHub-hosted macOS runner on every push/PR. Free for this public repo.
+
 ## [1.3.1] - 2026-07-27
 
 ### Changed
