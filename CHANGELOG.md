@@ -4,6 +4,14 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.5] - 2026-07-27
+
+### Changed
+- Faster update right after a session reset. Instead of waiting for the next launchd
+  collection (up to ~a minute), the app now polls every 8s during the last ~90s before
+  and throughout a reset, so the new window appears within seconds. It self-stops once
+  the new window loads (with a ~3 min safety cap).
+
 ## [1.2.4] - 2026-07-27
 
 ### Fixed
@@ -96,6 +104,7 @@ All notable changes to this project are documented here. This project adheres to
 - Color thresholds in the menu bar (80%+ red, 60%+ orange).
 - Optional SwiftBar plugin (`swiftbar/claude_usage.1m.sh`) for users who prefer SwiftBar.
 
+[1.2.5]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.2.5
 [1.2.4]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.2.4
 [1.2.3]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.2.3
 [1.2.2]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.2.2

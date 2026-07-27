@@ -25,6 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var flipTimer: Timer?                // one-off hourglass flip on manual refresh
     private var flipFrame = 0
     private let flipFrames = 16
+    private var resetPollTimer: Timer?           // fast polling around a reset for a quick update
+    private var resetPollCount = 0
 
     // Usage alerts (opt-in, persisted): notify once when a metric crosses the threshold.
     private var alertsEnabled = UserDefaults.standard.bool(forKey: "usageAlerts")
@@ -155,6 +157,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let resetting = remaining(u.sessionEpoch, maxSeconds: sessionMax, short: true)?.resetting ?? false
         if animationsEnabled && resetting { startSpinner() } else { stopSpinner() }
         if changed { pulse() }
+
+        // In the last ~90s before, and during, a reset, poll fast for a near-instant update.
+        let secs = u.sessionEpoch.map { Int($0 - Date().timeIntervalSince1970) }
+        if resetting || (secs.map { $0 > 0 && $0 <= 90 } ?? false) { startResetPolling() } else { stopResetPolling() }
     }
 
     private func toolTipText(_ u: Usage) -> String {
@@ -306,6 +312,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         spinTimer = t
     }
     private func stopSpinner() { spinTimer?.invalidate(); spinTimer = nil }
+
+    // Around a reset, collect every few seconds so the new window shows within seconds
+    // instead of waiting up to a full launchd cycle. Self-stops when the new window loads.
+    private func startResetPolling() {
+        guard resetPollTimer == nil else { return }
+        resetPollCount = 0
+        let t = Timer.scheduledTimer(withTimeInterval: 8, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            self.resetPollCount += 1
+            if self.resetPollCount > 24 { self.stopResetPolling(); return }  // safety cap (~3 min)
+            self.runCollect()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        resetPollTimer = t
+    }
+    private func stopResetPolling() { resetPollTimer?.invalidate(); resetPollTimer = nil; resetPollCount = 0 }
 
     // Manual-refresh flourish: flip the hourglass one full turn, then settle back upright.
     // Only when animations are on and the hourglass icon is showing (not during a reset).
