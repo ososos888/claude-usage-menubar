@@ -19,9 +19,18 @@ Session: 14% used · 3h 58m left
 Weekly (all models): 25% used · 4d 14h left
 Weekly (Fable): 0%
 ─────────────
-Updated: 2026-07-21T05:42:05Z
+Updated: 2026-07-27T01:19:00Z
 Refresh now
+Copy status
 Open usage page
+─────────────
+✓ Animations
+  Compact (session only)
+Usage alerts            ▸
+✓ Start at login
+─────────────
+Check for Updates…
+About (v1.3.2)
 Quit
 ```
 
