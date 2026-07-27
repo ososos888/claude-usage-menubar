@@ -85,8 +85,8 @@ cd claude-usage-menubar
 ## Customizing
 
 - **Collection interval**: `StartInterval` (seconds) in `com.user.claude-usage.plist`. Default 60.
-- **Display refresh**: the `Timer` interval in `ClaudeUsageBar.swift` (default 30s).
-- **Color thresholds**: `color(forPct:)` and `timeColor(_:)` in `ClaudeUsageBar.swift`. Each item is colored independently — session % and weekly % at 60%+ orange / 80%+ red; time-left at ≤60 min orange / ≤15 min red.
+- **Display refresh**: the `Timer` interval in `AppDelegate.swift` (default 30s).
+- **Color thresholds**: `level(forPct:)` and `timeLevel(_:)` in `UsageLogic.swift`. Each item is colored independently — session % and weekly % at 60%+ orange / 80%+ red; time-left at ≤60 min orange / ≤15 min red.
 - **Animations**: toggle from the menu ("Animations", persisted across launches). When on, the icon is a drawn hourglass whose sand tracks session time left (stepped ~hourly), spins while a session is resetting, flips one full turn when you hit "Refresh now", and the text pulses when a percentage changes. When off, a plain ⏳/↻ emoji with no motion.
 
 After editing, run `./standalone/build.sh` to rebuild and apply immediately.
@@ -128,7 +128,7 @@ rm -rf ~/Applications/ClaudeUsageBar.app ~/.claude-usage
 
 ## Versioning
 
-This project follows [Semantic Versioning](https://semver.org/). See [CHANGELOG.md](CHANGELOG.md). Current version: **1.3.1**.
+This project follows [Semantic Versioning](https://semver.org/). See [CHANGELOG.md](CHANGELOG.md). Current version: **1.3.2**.
 
 ## License
 

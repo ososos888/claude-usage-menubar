@@ -4,11 +4,15 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.3.2] - 2026-07-27
 
 ### Added
 - GitHub Actions CI (`.github/workflows/tests.yml`): runs the unit tests on a
   GitHub-hosted macOS runner on every push/PR. Free for this public repo.
+
+### Fixed
+- Corrected stale file/function references in the README "Customizing" section after
+  the source split (`AppDelegate.swift`, `level`/`timeLevel` in `UsageLogic.swift`).
 
 ## [1.3.1] - 2026-07-27
 
@@ -129,6 +133,7 @@ All notable changes to this project are documented here. This project adheres to
 - Color thresholds in the menu bar (80%+ red, 60%+ orange).
 - Optional SwiftBar plugin (`swiftbar/claude_usage.1m.sh`) for users who prefer SwiftBar.
 
+[1.3.2]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.3.2
 [1.3.1]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.3.1
 [1.3.0]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.3.0
 [1.2.5]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.2.5
