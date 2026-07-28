@@ -57,7 +57,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.menu = menu
         if alertsEnabled { requestNotificationAuth() }
         if let d = try? Data(contentsOf: historyURL),
-           let h = try? JSONDecoder().decode(SessionHistory.self, from: d) { history = h }
+           var h = try? JSONDecoder().decode(SessionHistory.self, from: d) {
+            var mx = 0   // make older raw-valued history cumulative so the line reads monotonic
+            h.points = h.points.map { mx = max(mx, $0.pct); return HistoryPoint(t: $0.t, pct: mx) }
+            history = h
+        }
         // Prevent App Nap from suspending our refresh timer while the Mac is awake
         // (idle system sleep is still allowed — we don't keep the Mac awake).
         napActivity = ProcessInfo.processInfo.beginActivity(

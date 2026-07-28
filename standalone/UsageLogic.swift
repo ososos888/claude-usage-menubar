@@ -123,7 +123,10 @@ func updatedHistory(_ h: SessionHistory, sessionEpoch: Double?, pct: Int?, now: 
     }
     guard let p = pct else { return out }
     if let last = out.points.last, now - last.t < minInterval { return out }
-    out.points.append(HistoryPoint(t: now, pct: p))
+    // Cumulative-since-reset view: usage never decreases within a window. A rolling-window
+    // roll-off or /usage noise is held at the running peak; it resets to 0 on a new window.
+    let cumulative = max(p, out.points.last?.pct ?? p)
+    out.points.append(HistoryPoint(t: now, pct: cumulative))
     if out.points.count > maxPoints { out.points.removeFirst(out.points.count - maxPoints) }
     return out
 }

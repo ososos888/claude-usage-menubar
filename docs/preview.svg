@@ -41,8 +41,8 @@
     <text x="666" y="120">-1h</text>
     <text x="744" y="120">now</text>
   </g>
-  <path d="M462,108 L510,105 L560,97 L610,86 L660,75 L700,80 L744,70 L744,110 L462,110 Z" fill="#0a84ff" fill-opacity="0.18"/>
-  <path d="M462,108 L510,105 L560,97 L610,86 L660,75 L700,80 L744,70" fill="none" stroke="#0a84ff" stroke-width="1.5"/>
+  <path d="M462,108 L510,104 L560,96 L610,88 L660,80 L700,74 L744,70 L744,110 L462,110 Z" fill="#0a84ff" fill-opacity="0.18"/>
+  <path d="M462,108 L510,104 L560,96 L610,88 L660,80 L700,74 L744,70" fill="none" stroke="#0a84ff" stroke-width="1.5"/>
   <circle cx="744" cy="70" r="2.6" fill="#0a84ff"/>
   <line x1="440" y1="122" x2="750" y2="122" stroke="#e5e5e7" stroke-width="1"/>
 
@@ -72,7 +72,7 @@
 
   <!-- bottom actions -->
   <text x="444" y="418" font-size="12.5" fill="#1d1d1f">Check for Updates…</text>
-  <text x="444" y="440" font-size="12.5" fill="#1d1d1f">About (v1.4.1)</text>
+  <text x="444" y="440" font-size="12.5" fill="#1d1d1f">About (v1.4.2)</text>
   <text x="444" y="462" font-size="12.5" fill="#1d1d1f">Quit</text>
   <text x="750" y="462" font-size="12" fill="#86868b" text-anchor="end">⌘Q</text>
 

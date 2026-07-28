@@ -4,6 +4,14 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.2] - 2026-07-28
+
+### Changed
+- Session trend chart is now **cumulative since reset**: it only rises (or stays flat) and
+  resets to 0 at each session reset. It previously plotted the raw rolling-window %, which
+  can dip as old usage ages out; the chart now holds the running peak within a window
+  (matching "usage since reset can't go down"). Existing history is migrated on load.
+
 ## [1.4.1] - 2026-07-28
 
 ### Changed
@@ -172,6 +180,7 @@ All notable changes to this project are documented here. This project adheres to
 - Color thresholds in the menu bar (80%+ red, 60%+ orange).
 - Optional SwiftBar plugin (`swiftbar/claude_usage.1m.sh`) for users who prefer SwiftBar.
 
+[1.4.2]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.4.2
 [1.4.1]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.4.1
 [1.4.0]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.4.0
 [1.3.4]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.3.4

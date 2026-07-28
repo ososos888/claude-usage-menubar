@@ -102,6 +102,12 @@ check(hh.points.count == 3 && hh.points.last?.pct == 7, "history: drift keeps po
 hh = updatedHistory(hh, sessionEpoch: b + 10 * 3600, pct: 1, now: b + 180)
 check(hh.windowEpoch == b + 10 * 3600 && hh.points.count == 1, "history: new window resets points")
 check(updatedHistory(hh, sessionEpoch: b + 10 * 3600, pct: nil, now: b + 300).points.count == 1, "history: nil pct → no point")
+var hm = SessionHistory(windowEpoch: b, points: [])
+hm = updatedHistory(hm, sessionEpoch: b, pct: 30, now: b)
+hm = updatedHistory(hm, sessionEpoch: b, pct: 12, now: b + 60)
+check(hm.points.last?.pct == 30, "history: cumulative — dip held at running max")
+hm = updatedHistory(hm, sessionEpoch: b, pct: 41, now: b + 120)
+check(hm.points.last?.pct == 41, "history: cumulative — rises to new peak")
 var hc = SessionHistory(windowEpoch: b, points: [])
 for i in 0 ..< 10 { hc = updatedHistory(hc, sessionEpoch: b, pct: i, now: b + Double(i) * 100, minInterval: 50, maxPoints: 5) }
 check(hc.points.count == 5, "history: capped to maxPoints")

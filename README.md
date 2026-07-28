@@ -30,7 +30,7 @@ Usage alerts            ▸
 ✓ Start at login
 ─────────────
 Check for Updates…
-About (v1.4.1)
+About (v1.4.2)
 Quit
 ```
 
@@ -138,7 +138,7 @@ rm -rf ~/Applications/ClaudeUsageBar.app ~/.claude-usage
 
 ## Versioning
 
-This project follows [Semantic Versioning](https://semver.org/). See [CHANGELOG.md](CHANGELOG.md). Current version: **1.4.1**.
+This project follows [Semantic Versioning](https://semver.org/). See [CHANGELOG.md](CHANGELOG.md). Current version: **1.4.2**.
 
 ## License
 
