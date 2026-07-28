@@ -4,6 +4,18 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.3] - 2026-07-28
+
+### Changed
+- Session trend chart: the x-axis now spans the full session window (reset → now), and the
+  line covers only actually-measured samples — the unmeasured early part (before recording
+  started) is left blank instead of interpolating a fake 0% start. Better empty than wrong.
+
+### Fixed
+- Robust per-session cleanup so stale data can't pile up: history is fully wiped on each
+  reset, points older than the current window are pruned on every update (covers a missed
+  reset), and corrupt/out-of-range points are dropped on load.
+
 ## [1.4.2] - 2026-07-28
 
 ### Changed
@@ -180,6 +192,7 @@ All notable changes to this project are documented here. This project adheres to
 - Color thresholds in the menu bar (80%+ red, 60%+ orange).
 - Optional SwiftBar plugin (`swiftbar/claude_usage.1m.sh`) for users who prefer SwiftBar.
 
+[1.4.3]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.4.3
 [1.4.2]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.4.2
 [1.4.1]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.4.1
 [1.4.0]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.4.0

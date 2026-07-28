@@ -111,15 +111,12 @@ struct SessionHistory: Equatable, Codable {
 ///   - samples are throttled to ~one per `minInterval` seconds
 ///   - the history is capped at `maxPoints`
 func updatedHistory(_ h: SessionHistory, sessionEpoch: Double?, pct: Int?, now: Double,
-                    minInterval: Double = 50, maxPoints: Int = 600) -> SessionHistory {
+                    windowSeconds: Double = 5 * 3600, minInterval: Double = 50, maxPoints: Int = 600) -> SessionHistory {
     var out = h
     if let se = sessionEpoch {
-        if let we = out.windowEpoch {
-            if se - we > 3600 { out.windowEpoch = se; out.points = [] }  // new window → reset
-            else { out.windowEpoch = se }                               // track minor drift
-        } else {
-            out.windowEpoch = se                                        // first sample
-        }
+        let isNew = (out.windowEpoch == nil) || (se - out.windowEpoch! > 3600)  // new window (reset)
+        out.windowEpoch = se
+        if isNew { out.points = [] }   // wipe on reset; record only what we actually measure
     }
     guard let p = pct else { return out }
     if let last = out.points.last, now - last.t < minInterval { return out }
@@ -127,6 +124,10 @@ func updatedHistory(_ h: SessionHistory, sessionEpoch: Double?, pct: Int?, now: 
     // roll-off or /usage noise is held at the running peak; it resets to 0 on a new window.
     let cumulative = max(p, out.points.last?.pct ?? p)
     out.points.append(HistoryPoint(t: now, pct: cumulative))
+    // Drop anything older than the current window — leftover garbage if a reset was ever
+    // missed (app not running at reset, etc.). Keyed on `now`, not the drifting reset time.
+    let cutoff = now - windowSeconds - 600
+    out.points.removeAll { $0.t < cutoff }
     if out.points.count > maxPoints { out.points.removeFirst(out.points.count - maxPoints) }
     return out
 }

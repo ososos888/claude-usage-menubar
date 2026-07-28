@@ -58,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if alertsEnabled { requestNotificationAuth() }
         if let d = try? Data(contentsOf: historyURL),
            var h = try? JSONDecoder().decode(SessionHistory.self, from: d) {
+            h.points = h.points.filter { $0.pct >= 0 && $0.pct <= 100 && $0.t.isFinite && $0.t > 0 }  // drop corrupt
             var mx = 0   // make older raw-valued history cumulative so the line reads monotonic
             h.points = h.points.map { mx = max(mx, $0.pct); return HistoryPoint(t: $0.t, pct: mx) }
             history = h
@@ -377,8 +378,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Session usage trend chart (this window), once we have a couple of samples.
         if history.points.count >= 2 {
             info("Session trend (this window)")
+            let windowStart = (history.windowEpoch ?? 0) - 5 * 3600   // reset time − window length
             let chartItem = NSMenuItem()
-            chartItem.view = SparkChartView(points: history.points, frame: NSRect(x: 0, y: 0, width: 240, height: 82))
+            chartItem.view = SparkChartView(points: history.points, windowStart: windowStart,
+                                            now: Date().timeIntervalSince1970,
+                                            frame: NSRect(x: 0, y: 0, width: 240, height: 82))
             menu.addItem(chartItem)
             menu.addItem(.separator())
         }
