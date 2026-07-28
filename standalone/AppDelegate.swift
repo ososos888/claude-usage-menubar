@@ -378,10 +378,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Session usage trend chart (this window), once we have a couple of samples.
         if history.points.count >= 2 {
             info("Session trend (this window)")
-            let windowStart = (history.windowEpoch ?? 0) - 5 * 3600   // reset time − window length
+            let reset = history.windowEpoch ?? 0                       // session end (reset time)
             let chartItem = NSMenuItem()
-            chartItem.view = SparkChartView(points: history.points, windowStart: windowStart,
-                                            now: Date().timeIntervalSince1970,
+            chartItem.view = SparkChartView(points: history.points,
+                                            windowStart: reset - 5 * 3600, windowEnd: reset,
                                             frame: NSRect(x: 0, y: 0, width: 240, height: 82))
             menu.addItem(chartItem)
             menu.addItem(.separator())

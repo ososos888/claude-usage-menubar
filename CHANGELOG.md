@@ -4,6 +4,13 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.4] - 2026-07-28
+
+### Changed
+- Session trend chart x-axis is now the fixed 5-hour session window, labeled from the reset
+  forward (`0h · 1h · 2h · 3h · 4h · 5h`) instead of relative-to-now (`-3h … now`). The
+  measured data fills its portion; the rest of the window stays blank.
+
 ## [1.4.3] - 2026-07-28
 
 ### Changed
@@ -192,6 +199,7 @@ All notable changes to this project are documented here. This project adheres to
 - Color thresholds in the menu bar (80%+ red, 60%+ orange).
 - Optional SwiftBar plugin (`swiftbar/claude_usage.1m.sh`) for users who prefer SwiftBar.
 
+[1.4.4]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.4.4
 [1.4.3]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.4.3
 [1.4.2]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.4.2
 [1.4.1]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.4.1
