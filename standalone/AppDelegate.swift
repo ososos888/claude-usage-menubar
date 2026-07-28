@@ -11,6 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var napActivity: NSObjectProtocol?   // opt out of App Nap so the timer keeps firing
     private let jsonURL = URL(fileURLWithPath: NSString(string: "~/.claude-usage/usage.json").expandingTildeInPath)
     private let collectPath = NSString(string: "~/.claude-usage/collect.sh").expandingTildeInPath
+    private let historyURL = URL(fileURLWithPath: NSString(string: "~/.claude-usage/session-history.json").expandingTildeInPath)
+    private var history = SessionHistory(windowEpoch: nil, points: [])  // session usage trend
     private var lastGood: Usage?                 // keep last successful read to avoid flicker
     private let sessionMax = 6 * 3600            // session window is 5h; treat >6h as a mid-reset artifact
     private let weeklyMax  = 8 * 86400           // weekly window is 7d; treat >8d as a mid-reset artifact
@@ -54,6 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         statusItem.menu = menu
         if alertsEnabled { requestNotificationAuth() }
+        if let d = try? Data(contentsOf: historyURL),
+           let h = try? JSONDecoder().decode(SessionHistory.self, from: d) { history = h }
         // Prevent App Nap from suspending our refresh timer while the Mac is awake
         // (idle system sleep is still allowed — we don't keep the Mac awake).
         napActivity = ProcessInfo.processInfo.beginActivity(
@@ -105,6 +109,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         prevWeekly = u.weeklyPct
         prevSessionEpoch = u.sessionEpoch
 
+        // Record the session-usage trend; persist only when it actually changes.
+        let beforeCount = history.points.count, beforeWindow = history.windowEpoch
+        history = updatedHistory(history, sessionEpoch: u.sessionEpoch, pct: u.sessionPct,
+                                 now: Date().timeIntervalSince1970)
+        if history.points.count != beforeCount || history.windowEpoch != beforeWindow {
+            if let d = try? JSONEncoder().encode(history) { try? d.write(to: historyURL) }
+        }
+
         statusItem.button?.toolTip = toolTipText(u)
         statusItem.button?.setAccessibilityLabel(accessibilityText(u))
         updateStatusItem()
@@ -124,9 +136,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if animationsEnabled && resetting { startSpinner() } else { stopSpinner() }
         if changed { pulse() }
 
-        // In the last ~90s before, and during, a reset, poll fast for a near-instant update.
+        // Poll fast in the last ~90s before/during a reset, and while the reset time is missing
+        // (right after a reset /usage reports "0% used" with no reset time for a bit).
         let secs = u.sessionEpoch.map { Int($0 - Date().timeIntervalSince1970) }
-        if resetting || (secs.map { $0 > 0 && $0 <= 90 } ?? false) { startResetPolling() } else { stopResetPolling() }
+        let needFastPoll = resetting
+            || (secs.map { $0 > 0 && $0 <= 90 } ?? false)
+            || u.sessionEpoch == nil
+        if needFastPoll { startResetPolling() } else { stopResetPolling() }
     }
 
     private func toolTipText(_ u: Usage) -> String {
@@ -353,6 +369,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let it = NSMenuItem(title: title, action: nil, keyEquivalent: "")
             it.isEnabled = false
             menu.addItem(it)
+        }
+        // Session usage trend chart (this window), once we have a couple of samples.
+        if history.points.count >= 2 {
+            info("Session trend (this window)")
+            let chartItem = NSMenuItem()
+            chartItem.view = SparkChartView(points: history.points, frame: NSRect(x: 0, y: 0, width: 240, height: 68))
+            menu.addItem(chartItem)
+            menu.addItem(.separator())
         }
         if let u = u {
             if let err = u.error { info("⚠️ Last update failed: \(err) (showing last good values)") }

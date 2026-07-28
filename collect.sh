@@ -44,8 +44,10 @@ to_epoch() {
 
 fail() {
   # Collection/parse failed: keep the last successful values, only refresh the error flag.
+  # Only preserve OUT if it is non-empty AND valid JSON; otherwise write a fresh minimal doc
+  # (a once-empty/corrupt file must never get stuck — the app can't parse it).
   local reason="$1"
-  if [[ -f "$OUT" ]]; then
+  if [[ -s "$OUT" ]] && jq -e . "$OUT" >/dev/null 2>&1; then
     jq --arg r "$reason" --arg t "$(date -u +%FT%TZ)" \
       '.error=$r | .checked_at=$t' "$OUT" > "$TMP" 2>/dev/null \
       && mv "$TMP" "$OUT"
@@ -105,4 +107,6 @@ jq -n \
      checked_at:             $ts
    }' > "$TMP" 2>/dev/null || fail "encode_failed"
 
+# Never overwrite with an empty/invalid file (would break the app's parse).
+[[ -s "$TMP" ]] && jq -e . "$TMP" >/dev/null 2>&1 || fail "encode_empty"
 mv "$TMP" "$OUT"

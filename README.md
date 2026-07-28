@@ -30,7 +30,7 @@ Usage alerts            ▸
 ✓ Start at login
 ─────────────
 Check for Updates…
-About (v1.3.4)
+About (v1.4.0)
 Quit
 ```
 
@@ -38,6 +38,7 @@ No third-party app like SwiftBar required. Because it only reads a local file, i
 
 Extras (all lightweight, from the menu):
 
+- **Session trend** — a mini line chart of this session's usage over time at the top of the dropdown; resets when the session resets.
 - **Per-item colors** — session %, weekly %, and time-left are each colored by their own state (session/weekly: 60%+ orange, 80%+ red; time: orange within 60 min of reset, red within 15 min).
 - **Tooltip** — hover the icon for the full breakdown without clicking.
 - **Copy status** — copy `s.. · w.. · <time>` to the clipboard.
@@ -84,7 +85,7 @@ cd claude-usage-menubar
 |---|---|
 | `collect.sh` | Parses `/usage` output into `~/.claude-usage/usage.json` (including reset epochs). Keeps the last good values on failure |
 | `com.user.claude-usage.plist` | launchd agent. Runs `collect.sh` every minute; starts at login |
-| `standalone/*.swift` | App source, split by concern: `UsageLogic.swift` (pure logic), `HourglassIcon.swift` (icon drawing), `AppDelegate.swift` (controller), `main.swift` (entry) |
+| `standalone/*.swift` | App source, split by concern: `UsageLogic.swift` (pure logic), `HourglassIcon.swift` (icon drawing), `SparkChartView.swift` (trend chart), `AppDelegate.swift` (controller), `main.swift` (entry) |
 | `standalone/build.sh` | Compiles `standalone/*.swift` → `~/Applications/ClaudeUsageBar.app` → registers launchd auto-start |
 | `tests/run.sh` | Unit tests for the pure logic (plain `swiftc`, no XCTest/SPM) |
 | `uninstall.sh` | Removes the agents, app, and data dir (guarded; supports `--dry-run` / `-y`) |
@@ -137,7 +138,7 @@ rm -rf ~/Applications/ClaudeUsageBar.app ~/.claude-usage
 
 ## Versioning
 
-This project follows [Semantic Versioning](https://semver.org/). See [CHANGELOG.md](CHANGELOG.md). Current version: **1.3.4**.
+This project follows [Semantic Versioning](https://semver.org/). See [CHANGELOG.md](CHANGELOG.md). Current version: **1.4.0**.
 
 ## License
 

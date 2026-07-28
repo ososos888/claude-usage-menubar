@@ -99,6 +99,35 @@ func shouldAdopt(newEpoch: Double?, lastEpoch: Double?, thresholdSeconds: Double
     return !(oe - ne > thresholdSeconds)
 }
 
+// A recorded session-usage sample and the rolling history for the current session window.
+struct HistoryPoint: Equatable, Codable { let t: Double; let pct: Int }
+struct SessionHistory: Equatable, Codable {
+    var windowEpoch: Double?    // the session reset epoch this history belongs to
+    var points: [HistoryPoint]
+}
+
+/// Append a sample to the session history, resetting it when a new session window begins.
+///   - a new window (reset time jumps > 1h forward) clears the points
+///   - samples are throttled to ~one per `minInterval` seconds
+///   - the history is capped at `maxPoints`
+func updatedHistory(_ h: SessionHistory, sessionEpoch: Double?, pct: Int?, now: Double,
+                    minInterval: Double = 50, maxPoints: Int = 600) -> SessionHistory {
+    var out = h
+    if let se = sessionEpoch {
+        if let we = out.windowEpoch {
+            if se - we > 3600 { out.windowEpoch = se; out.points = [] }  // new window → reset
+            else { out.windowEpoch = se }                               // track minor drift
+        } else {
+            out.windowEpoch = se                                        // first sample
+        }
+    }
+    guard let p = pct else { return out }
+    if let last = out.points.last, now - last.t < minInterval { return out }
+    out.points.append(HistoryPoint(t: now, pct: p))
+    if out.points.count > maxPoints { out.points.removeFirst(out.points.count - maxPoints) }
+    return out
+}
+
 private let staleISOFormatter = ISO8601DateFormatter()
 
 /// True if the collector's `checked_at` timestamp is older than `staleSeconds`.

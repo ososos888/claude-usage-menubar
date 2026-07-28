@@ -4,6 +4,21 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.0] - 2026-07-28
+
+### Added
+- Session usage trend: a mini line/area chart of the current session's usage over time at
+  the top of the dropdown, resetting with each session window. Sampled ~once per minute
+  and stored in `~/.claude-usage/session-history.json`. (`SparkChartView.swift` +
+  `updatedHistory()` in `UsageLogic.swift`, unit-tested.)
+
+### Fixed
+- Widget could stop updating for several minutes after a session reset. When `/usage`
+  briefly reports "0% used" with no reset time (right after a reset), `collect.sh` could
+  leave `usage.json` empty, and a once-empty/corrupt file stayed stuck (the app couldn't
+  parse it). `collect.sh` now never writes or keeps an empty/invalid file, and the app
+  fast-polls while the reset time is temporarily missing.
+
 ## [1.3.4] - 2026-07-28
 
 ### Fixed
@@ -151,6 +166,7 @@ All notable changes to this project are documented here. This project adheres to
 - Color thresholds in the menu bar (80%+ red, 60%+ orange).
 - Optional SwiftBar plugin (`swiftbar/claude_usage.1m.sh`) for users who prefer SwiftBar.
 
+[1.4.0]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.4.0
 [1.3.4]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.3.4
 [1.3.3]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.3.3
 [1.3.2]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.3.2

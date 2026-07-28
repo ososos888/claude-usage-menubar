@@ -7,7 +7,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"     # source repo root, embedded so the app can self-update
 APPNAME="ClaudeUsageBar"
 BUNDLE_ID="com.ososos888.claudeusagebar"
-VERSION="1.3.4"
+VERSION="1.4.0"
 APPDIR="$HOME/Applications/$APPNAME.app"
 PLIST="$HOME/Library/LaunchAgents/$BUNDLE_ID.plist"
 

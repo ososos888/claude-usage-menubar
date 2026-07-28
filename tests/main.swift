@@ -88,5 +88,23 @@ check(shouldAdopt(newEpoch: 100_000, lastEpoch: 100_000 + 5 * 3600) == false, "a
 check(shouldAdopt(newEpoch: 100_000 - 600, lastEpoch: 100_000) == true, "adopt: minutes earlier (drift) → true")
 check(shouldAdopt(newEpoch: 100_000, lastEpoch: 100_000) == true, "adopt: equal → true")
 
+// MARK: updatedHistory (session trend recording)
+let b = 1_000_000.0
+var hh = SessionHistory(windowEpoch: nil, points: [])
+hh = updatedHistory(hh, sessionEpoch: b + 5 * 3600, pct: 5, now: b)
+check(hh.points.count == 1 && hh.windowEpoch == b + 5 * 3600, "history: first point")
+hh = updatedHistory(hh, sessionEpoch: b + 5 * 3600, pct: 6, now: b + 10)
+check(hh.points.count == 1, "history: within minInterval → not appended")
+hh = updatedHistory(hh, sessionEpoch: b + 5 * 3600, pct: 6, now: b + 60)
+check(hh.points.count == 2, "history: appended after interval")
+hh = updatedHistory(hh, sessionEpoch: b + 5 * 3600 + 120, pct: 7, now: b + 120)
+check(hh.points.count == 3 && hh.points.last?.pct == 7, "history: drift keeps points")
+hh = updatedHistory(hh, sessionEpoch: b + 10 * 3600, pct: 1, now: b + 180)
+check(hh.windowEpoch == b + 10 * 3600 && hh.points.count == 1, "history: new window resets points")
+check(updatedHistory(hh, sessionEpoch: b + 10 * 3600, pct: nil, now: b + 300).points.count == 1, "history: nil pct → no point")
+var hc = SessionHistory(windowEpoch: b, points: [])
+for i in 0 ..< 10 { hc = updatedHistory(hc, sessionEpoch: b, pct: i, now: b + Double(i) * 100, minInterval: 50, maxPoints: 5) }
+check(hc.points.count == 5, "history: capped to maxPoints")
+
 print("\n\(total - failed)/\(total) passed" + (failed == 0 ? " ✅" : "  (\(failed) FAILED) ❌"))
 exit(failed == 0 ? 0 : 1)
