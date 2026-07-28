@@ -30,7 +30,7 @@ Usage alerts            ▸
 ✓ Start at login
 ─────────────
 Check for Updates…
-About (v1.4.4)
+About (v1.5.0)
 Quit
 ```
 
@@ -39,6 +39,7 @@ No third-party app like SwiftBar required. Because it only reads a local file, i
 Extras (all lightweight, from the menu):
 
 - **Session trend** — a mini line chart of this session's usage over time at the top of the dropdown; resets when the session resets.
+- **Enlarge** — click the trend chart (or "Enlarge graph") to open a larger floating window.
 - **Per-item colors** — session %, weekly %, and time-left are each colored by their own state (session/weekly: 60%+ orange, 80%+ red; time: orange within 60 min of reset, red within 15 min).
 - **Tooltip** — hover the icon for the full breakdown without clicking.
 - **Copy status** — copy `s.. · w.. · <time>` to the clipboard.
@@ -138,7 +139,7 @@ rm -rf ~/Applications/ClaudeUsageBar.app ~/.claude-usage
 
 ## Versioning
 
-This project follows [Semantic Versioning](https://semver.org/). See [CHANGELOG.md](CHANGELOG.md). Current version: **1.4.4**.
+This project follows [Semantic Versioning](https://semver.org/). See [CHANGELOG.md](CHANGELOG.md). Current version: **1.5.0**.
 
 ## License
 

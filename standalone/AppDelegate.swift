@@ -45,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // While the menu is open the status button is highlighted; drop explicit colors then so
     // the text inverts properly on the blue highlight.
     private var menuOpen = false
+    private var chartWindow: NSWindow?           // reused enlarge-graph window
     private let repoURL = "https://github.com/ososos888/claude-usage-menubar"
     private let latestReleaseAPI = "https://api.github.com/repos/ososos888/claude-usage-menubar/releases/latest"
     private var appVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?" }
@@ -382,8 +383,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let chartItem = NSMenuItem()
             chartItem.view = SparkChartView(points: history.points,
                                             windowStart: reset - 5 * 3600, windowEnd: reset,
-                                            frame: NSRect(x: 0, y: 0, width: 240, height: 82))
+                                            frame: NSRect(x: 0, y: 0, width: 240, height: 82),
+                                            onClick: { [weak self] in self?.showLargeChart() })
             menu.addItem(chartItem)
+            add(menu, "Enlarge graph", #selector(showLargeChart), key: "")
             menu.addItem(.separator())
         }
         if let u = u {
@@ -496,6 +499,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc private func openAbout() {
         if let url = URL(string: repoURL) { NSWorkspace.shared.open(url) }
+    }
+    // Enlarge the trend chart into a reusable floating window.
+    @objc private func showLargeChart() {
+        guard history.points.count >= 2 else { return }
+        let reset = history.windowEpoch ?? 0
+        let size = NSSize(width: 620, height: 360)
+        let chart = SparkChartView(points: history.points, windowStart: reset - 5 * 3600, windowEnd: reset,
+                                   frame: NSRect(origin: .zero, size: size))
+        let win: NSWindow
+        if let w = chartWindow {
+            win = w
+        } else {
+            win = NSWindow(contentRect: NSRect(origin: .zero, size: size),
+                           styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            win.isReleasedWhenClosed = false
+            win.level = .floating
+            win.title = "Claude — Session usage (this window)"
+            chartWindow = win
+        }
+        win.setContentSize(size)
+        win.contentView = chart
+        win.center()
+        NSApp.activate(ignoringOtherApps: true)
+        win.makeKeyAndOrderFront(nil)
     }
     // MARK: - Update
     @objc private func checkForUpdates() {

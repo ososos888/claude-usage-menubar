@@ -4,6 +4,13 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.0] - 2026-07-28
+
+### Added
+- Enlarge the session trend chart: click the mini chart in the dropdown (or the new
+  "Enlarge graph" menu item) to open a larger floating window with the same chart. The
+  chart's fonts and strokes scale with the view size, so it's crisp at either size.
+
 ## [1.4.4] - 2026-07-28
 
 ### Changed
@@ -199,6 +206,7 @@ All notable changes to this project are documented here. This project adheres to
 - Color thresholds in the menu bar (80%+ red, 60%+ orange).
 - Optional SwiftBar plugin (`swiftbar/claude_usage.1m.sh`) for users who prefer SwiftBar.
 
+[1.5.0]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.5.0
 [1.4.4]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.4.4
 [1.4.3]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.4.3
 [1.4.2]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.4.2
