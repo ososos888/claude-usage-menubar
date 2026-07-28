@@ -89,6 +89,16 @@ func compareVersions(_ a: String, _ b: String) -> Int {
     return 0
 }
 
+/// Whether to adopt a freshly-read reading or ignore it as an oscillation back to an
+/// already-expired window. Around a reset, `/usage` flips between the just-reset old window
+/// and the new one; once we've locked onto the later (new) window, a reading whose session
+/// reset time jumps more than `thresholdSeconds` *earlier* is a stale old-window flip.
+/// (Normal drift is only minutes, so it's always adopted.)
+func shouldAdopt(newEpoch: Double?, lastEpoch: Double?, thresholdSeconds: Double = 2 * 3600) -> Bool {
+    guard let ne = newEpoch, let oe = lastEpoch else { return true }
+    return !(oe - ne > thresholdSeconds)
+}
+
 private let staleISOFormatter = ISO8601DateFormatter()
 
 /// True if the collector's `checked_at` timestamp is older than `staleSeconds`.

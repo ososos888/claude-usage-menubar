@@ -4,6 +4,16 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.4] - 2026-07-28
+
+### Fixed
+- Repeated "session reset" notifications (arriving ~every minute, even at 0% usage) and
+  jumpy values shown right after a reset. Around a reset, `/usage` flips for a while between
+  the just-expired window and the new one — each flip moved the reported reset time ~5h,
+  which re-triggered the alert and bounced the displayed numbers. The app now ignores a
+  reading that jumps >2h back to an already-expired window (keeps the later/new one), and
+  the reset alert fires at most once per window (dedup on the reset epoch).
+
 ## [1.3.3] - 2026-07-27
 
 ### Changed
@@ -141,6 +151,7 @@ All notable changes to this project are documented here. This project adheres to
 - Color thresholds in the menu bar (80%+ red, 60%+ orange).
 - Optional SwiftBar plugin (`swiftbar/claude_usage.1m.sh`) for users who prefer SwiftBar.
 
+[1.3.4]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.3.4
 [1.3.3]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.3.3
 [1.3.2]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.3.2
 [1.3.1]: https://github.com/ososos888/claude-usage-menubar/releases/tag/v1.3.1

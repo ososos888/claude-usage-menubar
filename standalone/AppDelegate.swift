@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var prevSession: Int?                // last shown session % (for change detection)
     private var prevWeekly: Int?                 // last shown weekly %
     private var prevSessionEpoch: Double?        // last seen session reset time (for reset detection)
+    private var lastNotifiedResetEpoch: Double?  // reset window we already notified for (dedup)
     private var flipTimer: Timer?                // one-off hourglass flip on manual refresh
     private var flipFrame = 0
     private let flipFrames = 16
@@ -84,7 +85,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Render
     private func refresh() {
-        if let fresh = load() { lastGood = fresh }  // reuse last good on a transient read failure
+        // Adopt fresh reads, but ignore an oscillation back to an already-expired window
+        // (/usage flips between the just-reset old window and the new one for a while).
+        if let fresh = load(), shouldAdopt(newEpoch: fresh.sessionEpoch, lastEpoch: lastGood?.sessionEpoch) {
+            lastGood = fresh
+        }
         guard let u = lastGood else {
             statusItem.button?.toolTip = "No data (daemon not running?)"
             setTitle("Claude --", color: .systemRed)
@@ -106,11 +111,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         rebuildMenu(u)
         if alertsEnabled {
             checkAlerts(u)
-            // A reset only happens when the countdown expires, so the reset time jumps ~a full
-            // window (~5h) forward all at once. The reported time also drifts by a few minutes
-            // as a rolling window ages — so require a large jump (>3h) to avoid false alarms.
-            if let ne = u.sessionEpoch, let oe = oldEpoch, ne - oe > 3 * 3600 {
+            // Fire once when the reset time jumps ~a full window (~5h) forward (a real reset),
+            // and never twice for the same new window — dedup guards against any residual flip.
+            if let ne = u.sessionEpoch, let oe = oldEpoch, ne - oe > 3 * 3600,
+               lastNotifiedResetEpoch == nil || abs(ne - lastNotifiedResetEpoch!) > 3600 {
                 postNotification(title: "Claude usage", body: "Session reset — full capacity available")
+                lastNotifiedResetEpoch = ne
             }
         }
 

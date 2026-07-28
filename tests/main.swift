@@ -80,5 +80,13 @@ check(isStale(checkedAt: nil, now: now) == false, "stale: nil → false")
 check(isStale(checkedAt: iso.string(from: now.addingTimeInterval(-60)), now: now) == false, "stale: 60s old → false")
 check(isStale(checkedAt: iso.string(from: now.addingTimeInterval(-300)), now: now) == true, "stale: 300s old → true")
 
+// MARK: shouldAdopt (reset-window oscillation guard)
+check(shouldAdopt(newEpoch: nil, lastEpoch: 100_000) == true, "adopt: nil new → true")
+check(shouldAdopt(newEpoch: 100_000, lastEpoch: nil) == true, "adopt: no last → true")
+check(shouldAdopt(newEpoch: 200_000, lastEpoch: 100_000) == true, "adopt: later window → true")
+check(shouldAdopt(newEpoch: 100_000, lastEpoch: 100_000 + 5 * 3600) == false, "adopt: >2h earlier (old-window flip) → false")
+check(shouldAdopt(newEpoch: 100_000 - 600, lastEpoch: 100_000) == true, "adopt: minutes earlier (drift) → true")
+check(shouldAdopt(newEpoch: 100_000, lastEpoch: 100_000) == true, "adopt: equal → true")
+
 print("\n\(total - failed)/\(total) passed" + (failed == 0 ? " ✅" : "  (\(failed) FAILED) ❌"))
 exit(failed == 0 ? 0 : 1)

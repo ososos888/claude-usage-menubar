@@ -52,7 +52,7 @@
 
   <!-- bottom actions -->
   <text x="444" y="334" font-size="12.5" fill="#1d1d1f">Check for Updates…</text>
-  <text x="444" y="356" font-size="12.5" fill="#1d1d1f">About (v1.3.3)</text>
+  <text x="444" y="356" font-size="12.5" fill="#1d1d1f">About (v1.3.4)</text>
   <text x="444" y="378" font-size="12.5" fill="#1d1d1f">Quit</text>
   <text x="750" y="378" font-size="12" fill="#86868b" text-anchor="end">⌘Q</text>
 
