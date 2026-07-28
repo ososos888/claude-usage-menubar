@@ -374,7 +374,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if history.points.count >= 2 {
             info("Session trend (this window)")
             let chartItem = NSMenuItem()
-            chartItem.view = SparkChartView(points: history.points, frame: NSRect(x: 0, y: 0, width: 240, height: 68))
+            chartItem.view = SparkChartView(points: history.points, frame: NSRect(x: 0, y: 0, width: 240, height: 82))
             menu.addItem(chartItem)
             menu.addItem(.separator())
         }
