@@ -30,7 +30,7 @@ Usage alerts            ▸
 ✓ Start at login
 ─────────────
 Check for Updates…
-About (v1.5.0)
+About (v1.6.0)
 Quit
 ```
 
@@ -38,14 +38,15 @@ No third-party app like SwiftBar required. Because it only reads a local file, i
 
 Extras (all lightweight, from the menu):
 
-- **Session trend** — a mini line chart of this session's usage over time at the top of the dropdown; resets when the session resets.
+- **Session trend** — a mini line chart of this session's cumulative usage at the top of the dropdown; resets when the session resets. Both axes are fixed — the full 5-hour window across, the full 0–100% budget up (gridlines every 25%) — so the shape is comparable between sessions.
 - **Enlarge** — click the trend chart (or "Enlarge graph") to open a larger floating window.
 - **Per-item colors** — session %, weekly %, and time-left are each colored by their own state (session/weekly: 60%+ orange, 80%+ red; time: orange within 60 min of reset, red within 15 min).
 - **Tooltip** — hover the icon for the full breakdown without clicking.
 - **Copy status** — copy `s.. · w.. · <time>` to the clipboard.
 - **Usage alerts** — opt-in macOS notification when session or weekly crosses a chosen threshold (70 / 80 / 90%), plus a note when a session resets.
 - **Compact mode** — show only the session item to save menu bar width.
-- **Stale indicator** — if the collector daemon stops updating, the text dims and shows ⚠.
+- **Stale indicator** — if the collector stops updating (or its last run failed), the text dims and shows ⚠ instead of passing old numbers off as current.
+- **Signed-out handling** — if Claude Code is signed out, usage can't be read at all, so the menu bar says **⚠ Sign in**, the dropdown offers "Sign in to Claude…" (opens a Terminal running `claude auth login`), and you get one notification — not a stream of them.
 - **Start at login** — toggle auto-start (backed by the launchd agent).
 - **Check for updates** — compares against the latest GitHub release; if newer, one click opens a Terminal that pulls the latest source and rebuilds (the app restarts itself).
 - **About** — opens the project page and shows the version.
@@ -61,6 +62,7 @@ launchd (1 min)   collect.sh              usage.json          ClaudeUsageBar.app
 - **Data source**: Claude Code's `claude -p "/usage" --output-format json`. This slash command is handled locally, so it **costs zero tokens/usage** (`num_turns: 0`, `output_tokens: 0`).
 - **Why a daemon + cache**: calling `claude` on every render would be slow. A background daemon collects once a minute into a JSON cache, and the app just reads that file for an instant, stable display.
 - **Time left** is accurate to the minute: `collect.sh` stores reset times as absolute epochs, and the app recomputes remaining time on every render.
+- **Signed out is detected, not guessed**: signed out, `claude -p "/usage"` still exits 0 and just prints no numbers, so the collector checks the credential store (and `claude auth status --json`) to tell "signed out" apart from "format changed". Freshness is tracked with `collected_at` — the last *successful* collection — so a failing collector can never make old numbers look live.
 - The web app, desktop app, and Claude Code **share the same usage pool**, so reading one source (Claude Code) reflects total usage.
 
 ## Requirements
@@ -84,7 +86,7 @@ cd claude-usage-menubar
 
 | Path | Role |
 |---|---|
-| `collect.sh` | Parses `/usage` output into `~/.claude-usage/usage.json` (including reset epochs). Keeps the last good values on failure |
+| `collect.sh` | Parses `/usage` output into `~/.claude-usage/usage.json` (including reset epochs). Keeps the last good values on failure and records *why* it failed (`logged_out`, `auth_expired`, `no_numbers`, …) |
 | `com.user.claude-usage.plist` | launchd agent. Runs `collect.sh` every minute; starts at login |
 | `standalone/*.swift` | App source, split by concern: `UsageLogic.swift` (pure logic), `HourglassIcon.swift` (icon drawing), `SparkChartView.swift` (trend chart), `AppDelegate.swift` (controller), `main.swift` (entry) |
 | `standalone/build.sh` | Compiles `standalone/*.swift` → `~/Applications/ClaudeUsageBar.app` → registers launchd auto-start |

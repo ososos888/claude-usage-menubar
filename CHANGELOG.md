@@ -4,6 +4,37 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.6.0] - 2026-08-03
+
+### Fixed
+- **Signed out of Claude Code, the hourglass used to spin on "resetting" forever.** Signed
+  out, `claude -p "/usage"` still exits 0 and simply prints no usage numbers, so the
+  collector kept the previous values and only refreshed `checked_at`. Two things followed:
+  the staleness check (which reads `checked_at`) never fired, so the menu bar showed old
+  figures as if they were live; and the preserved reset time eventually elapsed, which reads
+  as a reset — spinning the icon indefinitely and re-running the collector every 5 seconds.
+  Freshness is now judged on `collected_at` (the last *successful* collection), and the reset
+  animation, the fast polling, and trend recording are all gated on collection succeeding.
+
+### Added
+- Signed-out state is now detected and surfaced instead of being silently wrong:
+  - the menu bar becomes a red **⚠ Sign in** instead of showing unrefreshable numbers;
+  - the dropdown leads with **Sign in to Claude…**, which opens a Terminal window running
+    `claude auth login` and re-collects a few times afterwards, so the menu bar recovers
+    without waiting for the next launchd tick;
+  - a notification fires **once per signed-out episode** (re-armed only after usage is
+    readable again), since this is the one failure that can't clear up on its own.
+- The collector distinguishes `logged_out` (no credentials, or `claude auth status` says so)
+  from `auth_expired` (credentials present but `/usage` produced nothing) and `no_numbers`
+  (output present but unparsable — our bug to fix). It probes the credential store before
+  spawning the CLI, so a signed-out Mac stops starting a `claude` process every minute.
+
+### Changed
+- Session trend chart y-axis is now the fixed **0–100% budget with solid gridlines every
+  25%**, instead of auto-scaling to the session's peak. Auto-scaling made 4% of the budget
+  fill the whole chart; a fixed axis means the line's height means the same thing every
+  session, at the cost of looking reassuringly flat on a light day.
+
 ## [1.5.0] - 2026-07-28
 
 ### Added

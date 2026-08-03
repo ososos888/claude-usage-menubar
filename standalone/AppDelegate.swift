@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var prevWeekly: Int?                 // last shown weekly %
     private var prevSessionEpoch: Double?        // last seen session reset time (for reset detection)
     private var lastNotifiedResetEpoch: Double?  // reset window we already notified for (dedup)
+    private var loggedOutNotified = false        // signed-out notice already sent (dedup)
     private var flipTimer: Timer?                // one-off hourglass flip on manual refresh
     private var flipFrame = 0
     private let flipFrames = 16
@@ -115,12 +116,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         prevWeekly = u.weeklyPct
         prevSessionEpoch = u.sessionEpoch
 
+        // Only animate a reset, poll fast, or record history while collection is succeeding.
+        // A frozen reset epoch (signed out, collector broken) elapses by itself and would
+        // otherwise spin the icon forever and back-fill the chart with re-read stale values.
+        let untrusted = isDataUntrusted(u)
+
         // Record the session-usage trend; persist only when it actually changes.
-        let beforeCount = history.points.count, beforeWindow = history.windowEpoch
-        history = updatedHistory(history, sessionEpoch: u.sessionEpoch, pct: u.sessionPct,
-                                 now: Date().timeIntervalSince1970)
-        if history.points.count != beforeCount || history.windowEpoch != beforeWindow {
-            if let d = try? JSONEncoder().encode(history) { try? d.write(to: historyURL) }
+        if !untrusted {
+            let beforeCount = history.points.count, beforeWindow = history.windowEpoch
+            history = updatedHistory(history, sessionEpoch: u.sessionEpoch, pct: u.sessionPct,
+                                     now: Date().timeIntervalSince1970)
+            if history.points.count != beforeCount || history.windowEpoch != beforeWindow {
+                if let d = try? JSONEncoder().encode(history) { try? d.write(to: historyURL) }
+            }
         }
 
         statusItem.button?.toolTip = toolTipText(u)
@@ -138,20 +146,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
-        let resetting = remainingTime(epoch: u.sessionEpoch, maxSeconds: sessionMax, short: true)?.resetting ?? false
+        // Signed out: say so once per episode. Unlike every other failure this one can't
+        // clear up on its own — it needs the user to sign in — so it's worth a notification
+        // even when the opt-in usage alerts are off.
+        if shouldNotifyLogout(loggedOut: isLoggedOut(u), alreadyNotified: &loggedOutNotified) {
+            postNotification(title: "Claude usage — signed out",
+                             body: "Claude Code is signed out, so usage tracking is paused. Sign in from the menu bar.")
+        }
+
+        let resetting = showResetting(u, maxSeconds: sessionMax)
         if animationsEnabled && resetting { startSpinner() } else { stopSpinner() }
         if changed { pulse() }
 
         // Poll fast in the last ~90s before/during a reset, and while the reset time is missing
-        // (right after a reset /usage reports "0% used" with no reset time for a bit).
+        // (right after a reset /usage reports "0% used" with no reset time for a bit). Never
+        // while the data is untrusted: those conditions would latch and hammer the collector.
         let secs = u.sessionEpoch.map { Int($0 - Date().timeIntervalSince1970) }
-        let needFastPoll = resetting
-            || (secs.map { $0 > 0 && $0 <= 90 } ?? false)
-            || u.sessionEpoch == nil
+        let needFastPoll = !untrusted
+            && (resetting
+                || (secs.map { $0 > 0 && $0 <= 90 } ?? false)
+                || u.sessionEpoch == nil)
         if needFastPoll { startResetPolling() } else { stopResetPolling() }
     }
 
     private func toolTipText(_ u: Usage) -> String {
+        if isLoggedOut(u) {
+            return "Claude Code is signed out — usage tracking is paused.\n"
+                 + "Click the menu bar item and choose \"Sign in to Claude…\"."
+        }
         var lines: [String] = []
         let s = u.sessionPct.map(String.init) ?? "?"
         let sRem = remainingTime(epoch: u.sessionEpoch, maxSeconds: sessionMax, short: false)?.text ?? "resets \(u.sessionReset ?? "?")"
@@ -161,11 +183,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         lines.append("Weekly (all models): \(w)% used · \(wRem)")
         if let ml = u.modelLabel, let mp = u.modelPct { lines.append("Weekly (\(ml)): \(mp)%") }
         if let ca = u.collectedAt { lines.append("Updated: \(ca)") }
-        if isStale(checkedAt: u.checkedAt) { lines.append("⚠ Data may be stale — the collector daemon may have stopped.") }
+        if isStale(checkedAt: u.checkedAt) {
+            lines.append("⚠ Data may be stale — the collector daemon may have stopped.")
+        } else if isDataUntrusted(u) {
+            lines.append("⚠ Not updating — the last collection failed\(u.error.map { " (\($0))" } ?? "").")
+        }
         return lines.joined(separator: "\n")
     }
 
     private func accessibilityText(_ u: Usage) -> String {
+        if isLoggedOut(u) { return "Claude usage. Signed out. Usage tracking is paused; sign in from this menu." }
         let s = u.sessionPct.map(String.init) ?? "unknown"
         let w = u.weeklyPct.map(String.init) ?? "unknown"
         var t = "Claude usage. Session \(s) percent. Weekly \(w) percent."
@@ -183,8 +210,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let u = lastGood else { button.image = nil; setTitle("Claude --", color: .systemRed); return }
         let s = u.sessionPct.map(String.init) ?? "?"
         let w = u.weeklyPct.map(String.init) ?? "?"
-        // Stale data (collector stopped): dim and mark, don't imply the old numbers are live.
-        if isStale(checkedAt: u.checkedAt) {
+        // Signed out: the numbers are unknowable until the user signs in, so make the menu bar
+        // itself the call to action instead of showing figures we can no longer refresh.
+        if isLoggedOut(u) {
+            button.image = nil
+            setSegments([("⚠ Sign in", .systemRed)])
+            return
+        }
+        // Otherwise untrusted (collector stopped or failing): dim and mark, don't imply the
+        // old numbers are live.
+        if isDataUntrusted(u) {
             button.image = nil
             let body = compactEnabled ? "⚠ s\(s)%" : "⚠ s\(s)% · w\(w)%"
             setSegments([(body, .secondaryLabelColor)])
@@ -265,6 +300,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func flipRefreshIcon() {
         guard animationsEnabled, statusItem.button != nil,
               let u = lastGood, let epoch = u.sessionEpoch,
+              !isDataUntrusted(u),   // no hourglass is showing when signed out / not updating
               !(remainingTime(epoch: u.sessionEpoch, maxSeconds: sessionMax, short: true)?.resetting ?? false)
         else { return }
         let diff = Int(epoch - Date().timeIntervalSince1970)
@@ -320,8 +356,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         content.title = title
         content.body = body
         content.sound = .default
-        let req = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(req)
+        // Ask before delivering. Authorization is only requested up front when usage alerts are
+        // enabled, but the signed-out notice fires regardless — and re-asking once granted is a
+        // no-op, so this is safe to do every time.
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+        }
     }
 
     // MARK: - Start at login (via the launchd agent; enable/disable does not kill the running app)
@@ -376,8 +418,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             it.isEnabled = false
             menu.addItem(it)
         }
-        // Session usage trend chart (this window), once we have a couple of samples.
-        if history.points.count >= 2 {
+        // Session usage trend chart (this window), once we have a couple of samples. Hidden
+        // while signed out: recording has stopped, so it's a frozen chart of a past window.
+        if history.points.count >= 2, !(u.map(isLoggedOut) ?? false) {
             info("Session trend (this window)")
             let reset = history.windowEpoch ?? 0                       // session end (reset time)
             let chartItem = NSMenuItem()
@@ -389,7 +432,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             add(menu, "Enlarge graph", #selector(showLargeChart), key: "")
             menu.addItem(.separator())
         }
-        if let u = u {
+        if let u = u, isLoggedOut(u) {
+            // Signed out: lead with the fix. Showing live-looking figures here would be a lie —
+            // report the last measured ones as history instead.
+            info("⚠️ Claude Code is signed out — usage tracking is paused")
+            add(menu, "Sign in to Claude…", #selector(signIn), key: "")
+            menu.addItem(.separator())
+            let s = u.sessionPct.map { "\($0)%" } ?? "?"
+            let w = u.weeklyPct.map { "\($0)%" } ?? "?"
+            info("Last measured: session \(s) · weekly \(w)")
+            info("Measured at: \(u.collectedAt ?? "?")")
+        } else if let u = u {
             if let err = u.error { info("⚠️ Last update failed: \(err) (showing last good values)") }
             let s = u.sessionPct.map(String.init) ?? "?"
             let sRem = remainingTime(epoch: u.sessionEpoch, maxSeconds: sessionMax, short: false)?.text ?? "resets \(u.sessionReset ?? "?")"
@@ -465,6 +518,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc private func openUsage() {
         if let url = URL(string: "https://claude.ai/settings/usage") { NSWorkspace.shared.open(url) }
+    }
+    // Signing in is interactive, so hand it to Terminal. Generating a .command file and
+    // launching it with `open` needs no AppleEvents permission (same approach as
+    // update.command); scripting Terminal directly would trigger an automation prompt.
+    @objc private func signIn() {
+        let script = """
+        #!/bin/bash
+        echo "Signing in to Claude Code — follow the prompts below."
+        echo
+        "\(claudeBinaryPath())" auth login
+        code=$?
+        echo
+        if [ $code -eq 0 ]; then
+          echo "Signed in. The menu bar picks it up within a minute."
+        else
+          echo "Sign-in did not complete (exit $code)."
+        fi
+        echo "You can close this window."
+        """
+        let url = URL(fileURLWithPath: NSString(string: "~/.claude-usage/signin.command").expandingTildeInPath)
+        guard (try? script.write(to: url, atomically: true, encoding: .utf8)) != nil else { return }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        p.arguments = [url.path]
+        try? p.run()
+        // Sign-in takes a browser round trip; re-collect a few times so the menu bar recovers
+        // without waiting for the next launchd tick.
+        for delay in [20.0, 45.0, 90.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.runCollect() }
+        }
+    }
+    // Where the claude CLI lives; mirrors the collector's fallback order.
+    private func claudeBinaryPath() -> String {
+        let fm = FileManager.default
+        let candidates = [NSString(string: "~/.local/bin/claude").expandingTildeInPath,
+                          "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
+        return candidates.first { fm.isExecutableFile(atPath: $0) } ?? "claude"
     }
     @objc private func copyStatus() {
         guard let u = lastGood else { return }
