@@ -58,6 +58,30 @@ fail() {
   exit 0
 }
 
+# Being signed out has to be detected explicitly: `claude -p "/usage"` still exits 0 with
+# is_error=false when there's no account — the slash command simply prints nothing — which
+# is indistinguishable from a parse failure. Two probes, cheapest first.
+#
+# 1. Is any credential source even configured? Spawning nothing keeps a signed-out Mac from
+#    starting a CLI process (and leaving a session log) every single minute. The keychain
+#    lookup asks for attributes only — adding -w would raise an access prompt.
+have_credentials() {
+  [[ -n "${ANTHROPIC_API_KEY:-}" || -n "${ANTHROPIC_AUTH_TOKEN:-}" ]] && return 0
+  [[ -n "${CLAUDE_CODE_USE_BEDROCK:-}" || -n "${CLAUDE_CODE_USE_VERTEX:-}" ]] && return 0
+  [[ -s "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.credentials.json" ]] && return 0
+  security find-generic-password -s "Claude Code-credentials" >/dev/null 2>&1
+}
+# 2. Authoritative check, only used to classify a failure: `claude auth status --json` prints
+#    {"loggedIn":true|false,…} and needs no session. Returns 1 on older CLIs without the
+#    subcommand, so callers must treat "unknown" as "not proven signed out".
+signed_out_confirmed() {
+  local st
+  st="$("$CLAUDE_BIN" auth status --json 2>/dev/null < /dev/null || true)"
+  [[ -n "$st" ]] || return 1
+  jq -e '.loggedIn == false' <<<"$st" >/dev/null 2>&1
+}
+have_credentials || fail "logged_out"
+
 # Collect raw output (stdout only; keep stderr separate so it can't corrupt the JSON).
 RAW="$("$CLAUDE_BIN" -p "/usage" --output-format json 2>/dev/null < /dev/null || true)"
 [[ -n "$RAW" ]] || fail "no_output"
@@ -76,8 +100,15 @@ M_LINE="$(printf '%s\n' "$TEXT"  | grep 'Current week' | grep -v 'all models' | 
 M_LABEL="$(printf '%s\n' "$M_LINE" | sed -n 's/^Current week (\([^)]*\)):.*$/\1/p')"
 M_PCT="$(printf '%s\n' "$M_LINE"   | sed -n 's/^Current week ([^)]*): \([0-9]*\)% used.*$/\1/p')"
 
-# If neither session nor weekly number is present, treat it as failure (format change detector).
-[[ -n "$S_PCT" || -n "$W_PCT" ]] || fail "no_numbers"
+# No numbers at all. Credentials are configured (checked above), so classify the cause:
+# the CLI itself says signed out -> logged_out; /usage printed none of its usual markers ->
+# the token expired or the subscription went away, both fixed by signing in; markers present
+# but unparsable -> the output format changed, which is our bug to fix.
+if [[ -z "$S_PCT" && -z "$W_PCT" ]]; then
+  signed_out_confirmed && fail "logged_out"
+  printf '%s\n' "$TEXT" | grep -q 'Current session\|Current week\|subscription' \
+    && fail "no_numbers" || fail "auth_expired"
+fi
 
 # Also store reset times as absolute epochs so the app can compute remaining time live.
 S_EPOCH="$(to_epoch "$S_RESET")"

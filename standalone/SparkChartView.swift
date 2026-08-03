@@ -1,9 +1,10 @@
 import AppKit
 
 // A cumulative usage chart for the current session. Used both small (top of the dropdown)
-// and large (the enlarge window). The x-axis is the fixed 5-hour session window labeled
-// 0h…5h from the reset; the line covers only actually-measured samples (unmeasured parts
-// stay blank). Fonts/strokes scale with the view height, so it reads well at any size.
+// and large (the enlarge window). Both axes are fixed so the shape is comparable between
+// sessions: x is the 5-hour session window labeled 0h…5h from the reset, y is the full
+// 0…100% budget with solid gridlines every 25%. The line covers only actually-measured
+// samples (unmeasured parts stay blank). Fonts/strokes scale with the view height.
 final class SparkChartView: NSView {
     private let points: [HistoryPoint]
     private let domainMin: Double   // session start (reset − window length)
@@ -46,11 +47,25 @@ final class SparkChartView: NSView {
         let span = tMax - tMin
         func x(_ t: Double) -> CGFloat { plot.minX + plot.width * CGFloat((t - tMin) / span) }
         let pcts = points.map { $0.pct }
-        let maxP = max(pcts.max() ?? 0, 1)
-        func y(_ p: Int) -> CGFloat { plot.minY + plot.height * CGFloat(p) / CGFloat(maxP) }
+        // The y-axis is always the full 0…100% budget, so the line's height means the same
+        // thing between sessions (auto-scaling to the peak made 4% look like a full bar).
+        func y(_ p: Int) -> CGFloat { plot.minY + plot.height * CGFloat(p) / 100 }
 
-        ("\(maxP)%" as NSString).draw(at: NSPoint(x: bounds.minX + 2, y: plot.maxY - 6 * sc), withAttributes: small)
-        ("0%" as NSString).draw(at: NSPoint(x: bounds.minX + 2, y: plot.minY - 5 * sc), withAttributes: small)
+        // solid gridlines every 25%; label them all unless the view is too short to fit
+        let labelEvery25 = plot.height >= 70
+        for pct in stride(from: 0, through: 100, by: 25) {
+            let gy = y(pct)
+            if pct > 0 {
+                let grid = NSBezierPath()
+                grid.move(to: NSPoint(x: plot.minX, y: gy)); grid.line(to: NSPoint(x: plot.maxX, y: gy))
+                grid.lineWidth = (pct == 100 ? 0.75 : 0.5) * sc
+                NSColor.separatorColor.setStroke(); grid.stroke()
+            }
+            guard labelEvery25 || pct % 50 == 0 else { continue }
+            let ns = "\(pct)%" as NSString
+            let h = ns.size(withAttributes: small).height
+            ns.draw(at: NSPoint(x: bounds.minX + 2, y: gy - h / 2), withAttributes: small)
+        }
 
         // dotted hourly gridlines from the session start: 0h, 1h, 2h …
         let hours = max(1, Int((span / 3600).rounded()))

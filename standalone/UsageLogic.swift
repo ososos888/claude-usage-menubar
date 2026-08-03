@@ -134,8 +134,52 @@ func updatedHistory(_ h: SessionHistory, sessionEpoch: Double?, pct: Int?, now: 
 
 private let staleISOFormatter = ISO8601DateFormatter()
 
-/// True if the collector's `checked_at` timestamp is older than `staleSeconds`.
+/// True if an ISO-8601 timestamp is older than `seconds`. Unparsable/missing → false.
+func isOlderThan(_ iso: String?, seconds: Double, now: Date = Date()) -> Bool {
+    guard let s = iso, let d = staleISOFormatter.date(from: s) else { return false }
+    return now.timeIntervalSince1970 - d.timeIntervalSince1970 > seconds
+}
+
+/// True if the collector's `checked_at` timestamp is older than `staleSeconds`, i.e. the
+/// daemon isn't even running. Note a *failing* collector still refreshes `checked_at` —
+/// use `isDataUntrusted` to ask whether the values themselves are still believable.
 func isStale(checkedAt: String?, now: Date = Date(), staleSeconds: Double = 180) -> Bool {
-    guard let s = checkedAt, let d = staleISOFormatter.date(from: s) else { return false }
-    return now.timeIntervalSince1970 - d.timeIntervalSince1970 > staleSeconds
+    isOlderThan(checkedAt, seconds: staleSeconds, now: now)
+}
+
+/// `error` values collect.sh writes when the CLI has no usable credentials. Both are fixed
+/// by signing in again, so the app treats them the same way.
+let loggedOutErrors: Set<String> = ["logged_out", "auth_expired"]
+
+/// Claude Code is signed out (or its token expired): usage can't be read at all.
+func isLoggedOut(_ u: Usage) -> Bool {
+    guard let e = u.error else { return false }
+    return loggedOutErrors.contains(e)
+}
+
+/// Whether the cached values must no longer be presented as live. Keyed on `collected_at`
+/// (last *successful* collection) rather than `checked_at`, because a failing run keeps
+/// bumping `checked_at` — which is why a signed-out Mac used to keep showing stale numbers
+/// as if nothing were wrong.
+func isDataUntrusted(_ u: Usage, now: Date = Date(), staleSeconds: Double = 180) -> Bool {
+    if u.error != nil { return true }
+    return isOlderThan(u.collectedAt, seconds: staleSeconds, now: now)
+}
+
+/// Whether to show the brief reset animation. A reset is only believable while collection
+/// is actually succeeding: a frozen reset epoch from a failing collector (signed out, say)
+/// elapses on its own and would otherwise spin the hourglass forever.
+func showResetting(_ u: Usage, maxSeconds: Int, now: Date = Date()) -> Bool {
+    guard !isDataUntrusted(u, now: now) else { return false }
+    return remainingTime(epoch: u.sessionEpoch, maxSeconds: maxSeconds, short: true, now: now)?.resetting ?? false
+}
+
+/// One-shot gate for the signed-out notification: fires on the transition into the
+/// signed-out state and re-arms only once usage is readable again. Reset notifications have
+/// misfired repeatedly in this app's history, so this guard is explicit and unit-tested.
+func shouldNotifyLogout(loggedOut: Bool, alreadyNotified: inout Bool) -> Bool {
+    guard loggedOut else { alreadyNotified = false; return false }
+    if alreadyNotified { return false }
+    alreadyNotified = true
+    return true
 }

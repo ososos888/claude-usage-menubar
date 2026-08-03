@@ -80,6 +80,58 @@ check(isStale(checkedAt: nil, now: now) == false, "stale: nil → false")
 check(isStale(checkedAt: iso.string(from: now.addingTimeInterval(-60)), now: now) == false, "stale: 60s old → false")
 check(isStale(checkedAt: iso.string(from: now.addingTimeInterval(-300)), now: now) == true, "stale: 300s old → true")
 
+// MARK: signed-out / untrusted data handling
+func usage(error: String? = nil, collectedAt: String? = nil, checkedAt: String? = nil,
+           sessionEpoch: Double? = nil) -> Usage {
+    var u = Usage()
+    u.sessionPct = 20; u.weeklyPct = 3
+    u.error = error; u.collectedAt = collectedAt; u.checkedAt = checkedAt
+    u.sessionEpoch = sessionEpoch
+    return u
+}
+let nowISO = iso.string(from: now)
+let oldISO = iso.string(from: now.addingTimeInterval(-3600))
+
+check(isLoggedOut(usage(error: "logged_out")) == true, "loggedOut: logged_out")
+check(isLoggedOut(usage(error: "auth_expired")) == true, "loggedOut: auth_expired")
+check(isLoggedOut(usage(error: "no_numbers")) == false, "loggedOut: other error → false")
+check(isLoggedOut(usage()) == false, "loggedOut: no error → false")
+
+check(isDataUntrusted(usage(collectedAt: nowISO, checkedAt: nowISO), now: now) == false,
+      "untrusted: fresh success → false")
+check(isDataUntrusted(usage(error: "logged_out", collectedAt: nowISO, checkedAt: nowISO), now: now) == true,
+      "untrusted: error → true even when checked_at is fresh")
+check(isDataUntrusted(usage(collectedAt: oldISO, checkedAt: nowISO), now: now) == true,
+      "untrusted: old collected_at → true (a failing run keeps bumping checked_at)")
+check(isDataUntrusted(usage(), now: now) == false, "untrusted: no timestamps → false")
+
+// The bug this release fixes: signed out, the collector preserves an old reset epoch and keeps
+// refreshing checked_at, so the elapsed epoch used to read as "resetting" forever.
+let elapsed = now.timeIntervalSince1970 - 100
+check(remainingTime(epoch: elapsed, maxSeconds: sessionMax, short: true, now: now)?.resetting == true,
+      "resetting: elapsed epoch alone still says resetting")
+check(showResetting(usage(error: "logged_out", collectedAt: oldISO, checkedAt: nowISO, sessionEpoch: elapsed),
+                    maxSeconds: sessionMax, now: now) == false,
+      "showResetting: signed out → never spins")
+check(showResetting(usage(collectedAt: oldISO, checkedAt: nowISO, sessionEpoch: elapsed),
+                    maxSeconds: sessionMax, now: now) == false,
+      "showResetting: no recent successful collect → never spins")
+check(showResetting(usage(collectedAt: nowISO, checkedAt: nowISO, sessionEpoch: elapsed),
+                    maxSeconds: sessionMax, now: now) == true,
+      "showResetting: fresh collect + elapsed epoch → real reset")
+check(showResetting(usage(collectedAt: nowISO, checkedAt: nowISO,
+                          sessionEpoch: now.timeIntervalSince1970 + 2 * H),
+                    maxSeconds: sessionMax, now: now) == false,
+      "showResetting: fresh collect, 2h left → not resetting")
+
+// MARK: shouldNotifyLogout (one-shot per episode)
+var notified = false
+check(shouldNotifyLogout(loggedOut: true, alreadyNotified: &notified) == true, "logoutNotify: first time → fires")
+check(shouldNotifyLogout(loggedOut: true, alreadyNotified: &notified) == false, "logoutNotify: still out → silent")
+check(shouldNotifyLogout(loggedOut: true, alreadyNotified: &notified) == false, "logoutNotify: no repeats")
+check(shouldNotifyLogout(loggedOut: false, alreadyNotified: &notified) == false, "logoutNotify: signed in → silent")
+check(shouldNotifyLogout(loggedOut: true, alreadyNotified: &notified) == true, "logoutNotify: re-arms after recovery")
+
 // MARK: shouldAdopt (reset-window oscillation guard)
 check(shouldAdopt(newEpoch: nil, lastEpoch: 100_000) == true, "adopt: nil new → true")
 check(shouldAdopt(newEpoch: 100_000, lastEpoch: nil) == true, "adopt: no last → true")
