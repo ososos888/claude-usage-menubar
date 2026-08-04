@@ -83,7 +83,16 @@ signed_out_confirmed() {
 have_credentials || fail "logged_out"
 
 # Collect raw output (stdout only; keep stderr separate so it can't corrupt the JSON).
-RAW="$("$CLAUDE_BIN" -p "/usage" --output-format json 2>/dev/null < /dev/null || true)"
+# --no-session-persistence keeps each collection from leaving a session transcript behind:
+# once a minute adds up to ~1,440 files (~4 MB) a day under ~/.claude/projects, all of them
+# one-shot /usage runs nobody will ever resume. The flag requires --print (we use -p).
+# An older CLI rejects an unknown option with an empty stdout and exit 1, so retry without
+# it rather than let a version difference break collection outright.
+collect_raw() {
+  "$CLAUDE_BIN" -p "/usage" --output-format json "$@" 2>/dev/null < /dev/null || true
+}
+RAW="$(collect_raw --no-session-persistence)"
+[[ -n "$RAW" ]] || RAW="$(collect_raw)"
 [[ -n "$RAW" ]] || fail "no_output"
 
 # Strip ANSI escapes, then extract the .result text.

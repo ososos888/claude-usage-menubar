@@ -30,7 +30,7 @@ Usage alerts            ▸
 ✓ Start at login
 ─────────────
 Check for Updates…
-About (v1.6.0)
+About (v1.6.1)
 Quit
 ```
 
@@ -59,7 +59,7 @@ launchd (1 min)   collect.sh              usage.json          ClaudeUsageBar.app
    ───────────▶  parse /usage & normalize ──▶ ~/.claude-usage/ ──▶ menu bar + dropdown
 ```
 
-- **Data source**: Claude Code's `claude -p "/usage" --output-format json`. This slash command is handled locally, so it **costs zero tokens/usage** (`num_turns: 0`, `output_tokens: 0`).
+- **Data source**: Claude Code's `claude -p "/usage" --output-format json --no-session-persistence`. This slash command is handled locally, so it **costs zero tokens/usage** (`num_turns: 0`, `output_tokens: 0`), and the flag keeps a once-a-minute collection from leaving ~1,440 throwaway session transcripts a day under `~/.claude/projects/`.
 - **Why a daemon + cache**: calling `claude` on every render would be slow. A background daemon collects once a minute into a JSON cache, and the app just reads that file for an instant, stable display.
 - **Time left** is accurate to the minute: `collect.sh` stores reset times as absolute epochs, and the app recomputes remaining time on every render.
 - **Signed out is detected, not guessed**: signed out, `claude -p "/usage"` still exits 0 and just prints no numbers, so the collector checks the credential store (and `claude auth status --json`) to tell "signed out" apart from "format changed". Freshness is tracked with `collected_at` — the last *successful* collection — so a failing collector can never make old numbers look live.
@@ -92,7 +92,7 @@ cd claude-usage-menubar
 | `standalone/build.sh` | Compiles `standalone/*.swift` → `~/Applications/ClaudeUsageBar.app` → registers launchd auto-start |
 | `tests/run.sh` | Unit tests for the pure logic (plain `swiftc`, no XCTest/SPM) |
 | `uninstall.sh` | Removes the agents, app, and data dir (guarded; supports `--dry-run` / `-y`) |
-| `update.command` | Double-clickable updater (`git pull` + rebuild); also used by in-app "Check for Updates" |
+| `update.command` | Double-clickable updater (`git pull`, refresh the installed collector, rebuild the app); also used by in-app "Check for Updates" |
 | `swiftbar/claude_usage.1m.sh` | (Optional) plugin alternative if you prefer SwiftBar |
 
 ## Customizing
