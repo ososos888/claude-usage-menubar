@@ -4,6 +4,22 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.6.1] - 2026-08-04
+
+### Fixed
+- Collecting no longer leaves a session transcript behind every run. `claude -p "/usage"`
+  saved a resumable session each time, so once-a-minute collection wrote ~1,440 files
+  (~4 MB) a day into `~/.claude/projects/`, none of which anyone would ever resume. The
+  collector now passes `--no-session-persistence`, and retries without it if the installed
+  CLI doesn't recognize the flag, so an older Claude Code can't break collection. (The
+  v1.6.0 spinner bug made this far worse — its 5-second poll loop could write a dozen files
+  a minute, which is how ~73k of them accumulated.)
+- `update.command` — and therefore the in-app "Check for Updates" — now also refreshes
+  `~/.claude-usage/collect.sh`. It previously only rebuilt the app, which meant **every
+  collector fix since the original install silently never reached the running collector**,
+  including v1.6.0's signed-out detection. It also reloads the launchd agent when the
+  collection schedule changes.
+
 ## [1.6.0] - 2026-08-03
 
 ### Fixed
