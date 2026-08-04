@@ -9,6 +9,7 @@ final class SparkChartView: NSView {
     private let points: [HistoryPoint]
     private let domainMin: Double   // session start (reset − window length)
     private let domainMax: Double   // session end (reset time)
+    private let knownWindow: Bool   // false when the domain was inferred from the samples
     private let onClick: (() -> Void)?
 
     init(points: [HistoryPoint], windowStart: Double, windowEnd: Double, frame: NSRect,
@@ -16,9 +17,9 @@ final class SparkChartView: NSView {
         self.points = points
         self.onClick = onClick
         if windowEnd > windowStart, windowStart > 0 {
-            domainMin = windowStart; domainMax = windowEnd
+            domainMin = windowStart; domainMax = windowEnd; knownWindow = true
         } else {
-            domainMin = points.first?.t ?? 0; domainMax = (points.last?.t ?? 1) + 1
+            domainMin = points.first?.t ?? 0; domainMax = (points.last?.t ?? 1) + 1; knownWindow = false
         }
         super.init(frame: frame)
     }
@@ -94,6 +95,27 @@ final class SparkChartView: NSView {
         area.line(to: NSPoint(x: x(points[0].t), y: plot.minY))
         area.close()
         NSColor.controlAccentColor.withAlphaComponent(0.18).setFill(); area.fill()
+
+        // Pace reference: spending the whole budget evenly over the window, 0% at 0h to 100%
+        // at 5h. Below it, usage is on pace to last the session; above it, the budget runs out
+        // early. Only drawn when the real window is known — against a sample-inferred domain
+        // the slope would be meaningless. Dashed grey, and drawn over the fill (so it reads the
+        // same everywhere) but under the data line (which stays the subject).
+        if knownWindow {
+            let pace = NSBezierPath()
+            pace.move(to: NSPoint(x: plot.minX, y: y(0))); pace.line(to: NSPoint(x: plot.maxX, y: y(100)))
+            pace.lineWidth = 1 * sc
+            pace.setLineDash([4 * sc, 3 * sc], count: 2, phase: 0)
+            NSColor.secondaryLabelColor.withAlphaComponent(0.45).setStroke(); pace.stroke()
+            if labelEvery25 {   // only the large view has room for it
+                let ns = "even pace" as NSString
+                let size = ns.size(withAttributes: tiny)
+                // sit just under the line at ~70% across, where the data line rarely reaches
+                let lx = plot.minX + plot.width * 0.70
+                ns.draw(at: NSPoint(x: lx, y: y(70) - size.height - 2 * sc), withAttributes: tiny)
+            }
+        }
+
         NSColor.controlAccentColor.setStroke(); line.lineWidth = 1.5 * sc; line.stroke()
         let last = NSPoint(x: x(points.last!.t), y: y(pcts[pcts.count - 1]))
         let r = 2.5 * sc

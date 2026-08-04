@@ -4,6 +4,16 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.7.0] - 2026-08-04
+
+### Added
+- Session trend chart draws an **even-pace reference line**: the diagonal from 0% at 0h to
+  100% at 5h, i.e. spending the whole session budget at a constant rate. While the usage line
+  stays below it you're on pace to last the window; crossing above it means the budget runs
+  out before the reset. Dashed grey, drawn over the fill but under the usage line, and labeled
+  "even pace" only in the enlarged view, where there's room. It's omitted when the real session
+  window isn't known yet (the domain is inferred from samples then, so the slope would lie).
+
 ## [1.6.1] - 2026-08-04
 
 ### Fixed
