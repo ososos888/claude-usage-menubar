@@ -30,7 +30,7 @@ Usage alerts            ▸
 ✓ Start at login
 ─────────────
 Check for Updates…
-About (v1.6.1)
+About (v1.7.0)
 Quit
 ```
 
@@ -38,7 +38,7 @@ No third-party app like SwiftBar required. Because it only reads a local file, i
 
 Extras (all lightweight, from the menu):
 
-- **Session trend** — a mini line chart of this session's cumulative usage at the top of the dropdown; resets when the session resets. Both axes are fixed — the full 5-hour window across, the full 0–100% budget up (gridlines every 25%) — so the shape is comparable between sessions.
+- **Session trend** — a mini line chart of this session's cumulative usage at the top of the dropdown; resets when the session resets. Both axes are fixed — the full 5-hour window across, the full 0–100% budget up (gridlines every 25%) — so the shape is comparable between sessions. A dashed **even-pace** diagonal (0% at 0h → 100% at 5h) shows whether you're on track: below it the budget lasts the window, above it it runs out early.
 - **Enlarge** — click the trend chart (or "Enlarge graph") to open a larger floating window.
 - **Per-item colors** — session %, weekly %, and time-left are each colored by their own state (session/weekly: 60%+ orange, 80%+ red; time: orange within 60 min of reset, red within 15 min).
 - **Tooltip** — hover the icon for the full breakdown without clicking.
