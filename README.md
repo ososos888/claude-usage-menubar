@@ -2,7 +2,7 @@
 
 [![tests](https://github.com/ososos888/claude-usage-menubar/actions/workflows/tests.yml/badge.svg)](https://github.com/ososos888/claude-usage-menubar/actions/workflows/tests.yml)
 
-A tiny native macOS menu bar app that always shows your Claude subscription (Pro/Max/Team) usage. No more opening Settings → Usage every time — see your session/weekly usage and the time left until reset at a glance.
+A tiny native macOS menu bar app that always shows your Claude subscription (Pro/Max/Team) usage — and your OpenAI Codex usage next to it when you're signed in to both. No more opening Settings → Usage every time — see your session/weekly usage and the time left until reset at a glance.
 
 <p align="center">
   <img src="docs/preview.svg" width="560" alt="Menu bar showing 's14% · w25% · ⏳3h58m' with an open dropdown listing session, weekly, and actions">
@@ -26,13 +26,54 @@ Open usage page
 ─────────────
 ✓ Animations
   Compact (session only)
+Trend chart             ▸
 Usage alerts            ▸
 ✓ Start at login
 ─────────────
 Check for Updates…
-About (v1.7.0)
+About (v1.8.0)
 Quit
 ```
+
+Signed in to the [Codex CLI](https://developers.openai.com/codex/cli/) as well, both are shown — session usage and time left for each, tagged `C` for Claude and `X` for Codex:
+
+```
+C 14% ⏳3h58m · X 83% ⏳2h47m
+```
+
+```
+Session trend (this window)
+[Claude chart]
+[Codex chart]
+Enlarge graph
+─────────────
+CLAUDE
+Session: 14% used · 3h 58m left
+Weekly (all models): 25% used · 4d 14h left
+Weekly (Fable): 0%
+CODEX
+Session: 83% used · 2h 47m left
+Weekly: 33% used · 5d 17h left
+Plan: plus · 2 rate-limit resets available
+─────────────
+Updated: Claude 2026-09-09T08:39:04Z · Codex 2026-09-09T08:39:55Z
+Refresh now
+Copy status
+Open usage page        ▸
+─────────────
+✓ Animations
+  Compact (session only)
+Menu bar                ▸
+Trend chart             ▸
+Usage alerts            ▸
+✓ Start at login
+─────────────
+Check for Updates…
+About (v1.8.0)
+Quit
+```
+
+Weekly percentages move to the dropdown in the two-provider bar — four percentages plus two clocks is more width than a menu bar should take. Nothing changes if you don't use Codex: no CLI, or signed out, and the widget stays exactly as it was.
 
 No third-party app like SwiftBar required. Because it only reads a local file, it triggers virtually no macOS permission prompts.
 
@@ -40,6 +81,8 @@ Extras (all lightweight, from the menu):
 
 - **Session trend** — a mini line chart of this session's cumulative usage at the top of the dropdown; resets when the session resets. Both axes are fixed — the full 5-hour window across, the full 0–100% budget up (gridlines every 25%) — so the shape is comparable between sessions. A dashed **even-pace** diagonal (0% at 0h → 100% at 5h) shows whether you're on track: below it the budget lasts the window, above it it runs out early.
 - **Enlarge** — click the trend chart (or "Enlarge graph") to open a larger floating window.
+- **Codex alongside Claude** — when the Codex CLI is installed and signed in, its 5-hour and weekly rate-limit windows are collected and shown next to Claude's, with their own trend chart, alerts, and usage-page link. The x-axis is *hours since each provider's own reset*, so two windows that started at different times still line up by session progress and can be compared directly.
+- **Display options** — **Menu bar** picks which providers reach the bar (Claude + Codex / Claude only / Codex only); **Trend chart** picks how the charts are drawn (two stacked charts / one overlaid chart with a legend / one provider only / off). Both are persisted, and the two-provider entries appear only once Codex is readable.
 - **Per-item colors** — session %, weekly %, and time-left are each colored by their own state (session/weekly: 60%+ orange, 80%+ red; time: orange within 60 min of reset, red within 15 min).
 - **Tooltip** — hover the icon for the full breakdown without clicking.
 - **Copy status** — copy `s.. · w.. · <time>` to the clipboard.
@@ -55,14 +98,18 @@ Extras (all lightweight, from the menu):
 ## How it works
 
 ```
-launchd (1 min)   collect.sh              usage.json          ClaudeUsageBar.app (30s refresh)
-   ───────────▶  parse /usage & normalize ──▶ ~/.claude-usage/ ──▶ menu bar + dropdown
+launchd (1 min)   collect.sh               usage.json           ClaudeUsageBar.app (30s refresh)
+   ───────────▶  parse /usage & normalize  ──▶ ~/.claude-usage/ ──▶ menu bar + dropdown
+   ───────────▶  collect-codex.sh          ──▶ codex-usage.json ──▶
+                 app-server rate limits
 ```
 
-- **Data source**: Claude Code's `claude -p "/usage" --output-format json --no-session-persistence`. This slash command is handled locally, so it **costs zero tokens/usage** (`num_turns: 0`, `output_tokens: 0`), and the flag keeps a once-a-minute collection from leaving ~1,440 throwaway session transcripts a day under `~/.claude/projects/`.
+- **Claude data source**: Claude Code's `claude -p "/usage" --output-format json --no-session-persistence`. This slash command is handled locally, so it **costs zero tokens/usage** (`num_turns: 0`, `output_tokens: 0`), and the flag keeps a once-a-minute collection from leaving ~1,440 throwaway session transcripts a day under `~/.claude/projects/`.
+- **Codex data source**: the Codex CLI's app-server, asked over JSON-RPC on stdio for `account/rateLimits/read` — the same rate-limit snapshot the Codex TUI's `/status` renders. It returns `primary` (the rolling 5-hour window) and `secondary` (the weekly one) as `usedPercent` + `resetsAt` + `windowDurationMins`. No thread and no turn is ever started, so it **costs zero tokens** and, unlike `codex exec`, leaves nothing behind under `~/.codex/sessions`. One collection takes ~1.5 s.
 - **Why a daemon + cache**: calling `claude` on every render would be slow. A background daemon collects once a minute into a JSON cache, and the app just reads that file for an instant, stable display.
 - **Time left** is accurate to the minute: `collect.sh` stores reset times as absolute epochs, and the app recomputes remaining time on every render.
 - **Signed out is detected, not guessed**: signed out, `claude -p "/usage"` still exits 0 and just prints no numbers, so the collector checks the credential store (and `claude auth status --json`) to tell "signed out" apart from "format changed". Freshness is tracked with `collected_at` — the last *successful* collection — so a failing collector can never make old numbers look live.
+- **Codex is optional, and silent when absent**: no CLI (`not_installed`) or nobody signed in (`logged_out`) simply hides the Codex half — no warning, no notification, no second sign-in nag. Its collector checks for `~/.codex/auth.json` before spawning anything, so a Mac without Codex doesn't start a process every minute. A *transient* failure behaves like Claude's: the last good values stay, marked stale.
 - The web app, desktop app, and Claude Code **share the same usage pool**, so reading one source (Claude Code) reflects total usage.
 
 ## Requirements
@@ -70,6 +117,7 @@ launchd (1 min)   collect.sh              usage.json          ClaudeUsageBar.app
 - macOS 12+
 - [Claude Code](https://claude.com/claude-code) — signed in with a subscription account (a subscription login session, not an API key)
 - [`jq`](https://jqlang.github.io/jq/) — `brew install jq`
+- *(optional)* [Codex CLI](https://developers.openai.com/codex/cli/) 0.150+ signed in with `codex login` — only needed for the Codex half; without it the widget is Claude-only
 - Swift compiler — `xcode-select --install` (Command Line Tools)
 
 ## Install
@@ -87,7 +135,9 @@ cd claude-usage-menubar
 | Path | Role |
 |---|---|
 | `collect.sh` | Parses `/usage` output into `~/.claude-usage/usage.json` (including reset epochs). Keeps the last good values on failure and records *why* it failed (`logged_out`, `auth_expired`, `no_numbers`, …) |
+| `collect-codex.sh` | Same contract for Codex: asks the Codex app-server for `account/rateLimits/read` and writes `~/.claude-usage/codex-usage.json`. Uses the same key names, so one parser reads both providers |
 | `com.user.claude-usage.plist` | launchd agent. Runs `collect.sh` every minute; starts at login |
+| `com.user.codex-usage.plist` | launchd agent for `collect-codex.sh`. Installed always; exits immediately when Codex isn't there |
 | `standalone/*.swift` | App source, split by concern: `UsageLogic.swift` (pure logic), `HourglassIcon.swift` (icon drawing), `SparkChartView.swift` (trend chart), `AppDelegate.swift` (controller), `main.swift` (entry) |
 | `standalone/build.sh` | Compiles `standalone/*.swift` → `~/Applications/ClaudeUsageBar.app` → registers launchd auto-start |
 | `tests/run.sh` | Unit tests for the pure logic (plain `swiftc`, no XCTest/SPM) |
@@ -97,10 +147,12 @@ cd claude-usage-menubar
 
 ## Customizing
 
-- **Collection interval**: `StartInterval` (seconds) in `com.user.claude-usage.plist`. Default 60.
+- **Collection interval**: `StartInterval` (seconds) in `com.user.claude-usage.plist` and `com.user.codex-usage.plist`. Default 60.
 - **Display refresh**: the `Timer` interval in `AppDelegate.swift` (default 30s).
 - **Color thresholds**: `level(forPct:)` and `timeLevel(_:)` in `UsageLogic.swift`. Each item is colored independently — session % and weekly % at 60%+ orange / 80%+ red; time-left at ≤60 min orange / ≤15 min red.
-- **Animations**: toggle from the menu ("Animations", persisted across launches). When on, the icon is a drawn hourglass whose sand tracks session time left (stepped ~hourly), spins while a session is resetting, flips one full turn when you hit "Refresh now", and the text pulses when a percentage changes. When off, a plain ⏳/↻ emoji with no motion.
+- **Chart colors**: Claude uses the system accent color; Codex uses `codexColor` in `AppDelegate.swift` (system teal). Change it if it clashes with your accent choice in the overlaid chart.
+- **Provider tags**: `Provider.tag` in `UsageLogic.swift` (`C` / `X`), used only in the two-provider bar.
+- **Animations**: toggle from the menu ("Animations", persisted across launches). When on, the icon is a drawn hourglass whose sand tracks session time left (stepped ~hourly), spins while a session is resetting, flips one full turn when you hit "Refresh now", and the text pulses when a percentage changes. When off, a plain ⏳/↻ emoji with no motion. A status item has exactly one image slot, so the drawn hourglass can only stand for one session window: with both providers on the bar it steps aside for plain ⏳ glyphs, and the text pulse still works.
 
 After editing, run `./standalone/build.sh` to rebuild and apply immediately.
 
@@ -123,25 +175,28 @@ It compiles the logic with plain `swiftc` (no XCTest/SPM) and exits non-zero on 
 ./uninstall.sh -y           # skip the confirmation prompt
 ```
 
-It removes only what this project creates — the two launchd agents, `~/Applications/ClaudeUsageBar.app`, and `~/.claude-usage` — and never touches SwiftBar. Prefer to do it by hand? The equivalent commands:
+It removes only what this project creates — the three launchd agents, `~/Applications/ClaudeUsageBar.app`, and `~/.claude-usage` — and never touches SwiftBar. Prefer to do it by hand? The equivalent commands:
 
 ```bash
 launchctl unload ~/Library/LaunchAgents/com.ososos888.claudeusagebar.plist
 launchctl unload ~/Library/LaunchAgents/com.user.claude-usage.plist
+launchctl unload ~/Library/LaunchAgents/com.user.codex-usage.plist
 rm ~/Library/LaunchAgents/com.ososos888.claudeusagebar.plist
 rm ~/Library/LaunchAgents/com.user.claude-usage.plist
+rm ~/Library/LaunchAgents/com.user.codex-usage.plist
 rm -rf ~/Applications/ClaudeUsageBar.app ~/.claude-usage
 ```
 
 ## Notes
 
 - Parsing `/usage` output is an **unofficial path**. If Anthropic changes the output format, update the parser in `collect.sh` (the app then shows `Claude --`).
+- The Codex app-server protocol is marked **experimental** by the CLI, so `account/rateLimits/read` may be renamed or reshaped by a Codex release. When that happens the collector writes `no_numbers` or `rpc_error`, the Codex half disappears, and the Claude half is unaffected — the fix is in `collect-codex.sh`.
 - To read subscription usage, `claude` must be authenticated with a **subscription login session**. If it's authenticated via `ANTHROPIC_API_KEY`, it bills against the API and behaves differently.
 - On the Team plan, limits are **per member**; this widget reflects the currently signed-in account.
 
 ## Versioning
 
-This project follows [Semantic Versioning](https://semver.org/). See [CHANGELOG.md](CHANGELOG.md). Current version: **1.5.0**.
+This project follows [Semantic Versioning](https://semver.org/). See [CHANGELOG.md](CHANGELOG.md). Current version: **1.8.0**.
 
 ## License
 

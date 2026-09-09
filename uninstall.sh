@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Uninstaller for the Claude usage menu bar widget.
 # Removes ONLY what this project creates:
-#   - launchd agents: com.ososos888.claudeusagebar, com.user.claude-usage
+#   - launchd agents: com.ososos888.claudeusagebar, com.user.claude-usage, com.user.codex-usage
 #   - app bundle:      ~/Applications/ClaudeUsageBar.app
 #   - data directory:  ~/.claude-usage
 # SwiftBar itself is never touched.
@@ -30,8 +30,10 @@ done
 
 APP_LABEL="com.ososos888.claudeusagebar"
 COLLECT_LABEL="com.user.claude-usage"
+CODEX_LABEL="com.user.codex-usage"
 APP_PLIST="$HOME/Library/LaunchAgents/$APP_LABEL.plist"
 COLLECT_PLIST="$HOME/Library/LaunchAgents/$COLLECT_LABEL.plist"
+CODEX_PLIST="$HOME/Library/LaunchAgents/$CODEX_LABEL.plist"
 APP_DIR="$HOME/Applications/ClaudeUsageBar.app"
 DATA_DIR="$HOME/.claude-usage"
 APP_BIN="$APP_DIR/Contents/MacOS/ClaudeUsageBar"
@@ -44,6 +46,7 @@ APP_BIN="$APP_DIR/Contents/MacOS/ClaudeUsageBar"
 echo "This will remove:"
 echo "  - launchd agent: $APP_LABEL"
 echo "  - launchd agent: $COLLECT_LABEL"
+echo "  - launchd agent: $CODEX_LABEL"
 echo "  - app bundle:    $APP_DIR"
 echo "  - data dir:      $DATA_DIR"
 echo "  (SwiftBar and any SwiftBar plugin symlink are NOT removed.)"
@@ -59,7 +62,7 @@ fi
 run() { echo "+ $*"; [[ $DRY_RUN -eq 1 ]] || "$@"; }
 
 # 1) Unload + remove launchd agents (only the ones we created, if present)
-for pl in "$APP_PLIST" "$COLLECT_PLIST"; do
+for pl in "$APP_PLIST" "$COLLECT_PLIST" "$CODEX_PLIST"; do
   if [[ -f "$pl" ]]; then
     echo "+ launchctl unload $pl"
     [[ $DRY_RUN -eq 1 ]] || launchctl unload "$pl" 2>/dev/null || true

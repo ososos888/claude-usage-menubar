@@ -2,7 +2,21 @@
 // plain swiftc (see ../tests/run.sh). No AppKit here.
 import Foundation
 
-// Parsed contents of ~/.claude-usage/usage.json (produced by collect.sh).
+// The two subscriptions this widget can track. Claude is the primary one; Codex is optional
+// and simply absent when its CLI isn't installed or nobody is signed in.
+enum Provider: String, Codable, CaseIterable {
+    case claude, codex
+    /// Full name, for the dropdown and notifications.
+    var title: String { self == .claude ? "Claude" : "Codex" }
+    /// One-letter menu bar tag, used only when both providers are shown side by side.
+    var tag: String { self == .claude ? "C" : "X" }
+}
+
+// Parsed contents of ~/.claude-usage/usage.json (collect.sh, Claude) or
+// ~/.claude-usage/codex-usage.json (collect-codex.sh, Codex). Both collectors write the same
+// key names for the fields they share, so one struct covers both; the extras are per-provider
+// and stay nil for the other (`modelLabel`/`modelPct` are Claude-only, `plan`/`resetCredits`
+// and the window lengths are Codex-only).
 struct Usage: Equatable {
     var sessionPct: Int?
     var sessionReset: String?
@@ -12,6 +26,10 @@ struct Usage: Equatable {
     var weeklyEpoch: Double?
     var modelLabel: String?
     var modelPct: Int?
+    var plan: String?              // Codex plan name, e.g. "plus"
+    var resetCredits: Int?         // Codex rate-limit reset credits available
+    var sessionWindowMins: Int?    // measured session window length (Codex reports it)
+    var weeklyWindowMins: Int?
     var error: String?
     var collectedAt: String?
     var checkedAt: String?
@@ -29,13 +47,17 @@ struct Usage: Equatable {
         u.sessionPct = int("session_pct"); u.sessionReset = str("session_reset"); u.sessionEpoch = dbl("session_reset_epoch")
         u.weeklyPct = int("weekly_all_pct"); u.weeklyReset = str("weekly_all_reset"); u.weeklyEpoch = dbl("weekly_all_reset_epoch")
         u.modelLabel = str("weekly_model_label"); u.modelPct = int("weekly_model_pct")
+        u.plan = str("plan"); u.resetCredits = int("reset_credits")
+        u.sessionWindowMins = int("session_window_mins"); u.weeklyWindowMins = int("weekly_window_mins")
         u.error = str("error"); u.collectedAt = str("collected_at"); u.checkedAt = str("checked_at")
         return u
     }
 }
 
 // Severity used to color a menu bar item; mapped to a concrete NSColor in the view layer.
-enum UsageLevel { case normal, warn, critical }
+// `dim` is not a severity but a de-emphasis: provider tags, separators, and values we can no
+// longer refresh.
+enum UsageLevel { case normal, warn, critical, dim }
 
 let usageImminentSeconds = 15 * 60
 
@@ -182,4 +204,248 @@ func shouldNotifyLogout(loggedOut: Bool, alreadyNotified: inout Bool) -> Bool {
     if alreadyNotified { return false }
     alreadyNotified = true
     return true
+}
+
+// MARK: - Provider availability and window lengths
+
+/// Codex reported no usage we can show. Codex is optional, so these states hide the Codex
+/// half of the widget entirely instead of nagging about a product the user may not use.
+let codexAbsentErrors: Set<String> = ["not_installed", "logged_out"]
+
+/// Whether a Codex reading is worth putting on screen: the collector found the CLI, somebody
+/// is signed in, and at least one percentage has been read at some point.
+func isCodexAvailable(_ u: Usage?) -> Bool {
+    guard let u = u else { return false }
+    if let e = u.error, codexAbsentErrors.contains(e) { return false }
+    return u.sessionPct != nil || u.weeklyPct != nil
+}
+
+/// Length of the session window in seconds. Claude's is a fixed 5 hours; Codex reports its
+/// own (`windowDurationMins`, 300 today) so a future change doesn't silently skew the chart.
+func sessionWindowSeconds(_ u: Usage?, fallback: Double = 5 * 3600) -> Double {
+    guard let m = u?.sessionWindowMins, m > 0 else { return fallback }
+    return Double(m) * 60
+}
+
+/// Largest remaining time still believable for a weekly window: 7 days plus a day of slack.
+/// Anything above it is a mid-reset parse artifact, not a real reading.
+let weeklyMaxSeconds = 8 * 86400
+
+/// Largest remaining time still believable for a session window: the window plus an hour of
+/// slack. Anything above it is a mid-reset parse artifact, not a real reading.
+func sessionMaxSeconds(_ u: Usage?, fallback: Int = 6 * 3600) -> Int {
+    guard let m = u?.sessionWindowMins, m > 0 else { return fallback }
+    return m * 60 + 3600
+}
+
+// MARK: - Display options (persisted in UserDefaults by the app)
+
+/// Which providers the menu bar itself shows. The dropdown always lists everything available.
+enum BarMode: String, CaseIterable {
+    case both, claudeOnly, codexOnly
+    var title: String {
+        switch self {
+        case .both: return "Claude + Codex"
+        case .claudeOnly: return "Claude only"
+        case .codexOnly: return "Codex only"
+        }
+    }
+}
+
+/// How the session trend chart(s) are drawn in the dropdown.
+enum ChartMode: String, CaseIterable {
+    case stacked, overlay, claudeOnly, codexOnly, off
+    var title: String {
+        switch self {
+        case .stacked: return "Two charts (stacked)"
+        case .overlay: return "One chart (overlaid)"
+        case .claudeOnly: return "Claude only"
+        case .codexOnly: return "Codex only"
+        case .off: return "Off"
+        }
+    }
+}
+
+/// Providers to chart, in draw order, given the mode and what data exists.
+func chartProviders(_ mode: ChartMode, codexAvailable: Bool) -> [Provider] {
+    switch mode {
+    case .off: return []
+    case .claudeOnly: return [.claude]
+    case .codexOnly: return codexAvailable ? [.codex] : [.claude]
+    case .stacked, .overlay: return codexAvailable ? [.claude, .codex] : [.claude]
+    }
+}
+
+// MARK: - Menu bar rendering
+
+/// A drawn hourglass standing in for a run of text: sand level = `remaining` of `windowHours`.
+struct HourglassSpec: Equatable { let remaining: Int; let windowHours: Int }
+
+/// One colored run of menu bar text. When `hourglass` is set the view draws that icon instead
+/// of the text, and `text` is the plain-text stand-in used for "Copy status" and VoiceOver.
+struct Seg: Equatable {
+    let text: String
+    let level: UsageLevel
+    var hourglass: HourglassSpec?
+    init(text: String, level: UsageLevel, hourglass: HourglassSpec? = nil) {
+        self.text = text; self.level = level; self.hourglass = hourglass
+    }
+}
+
+/// What the status item's image should be. The item has exactly one image slot, so the drawn
+/// hourglass can only stand for one session window — it is therefore used only when a single
+/// provider is on the bar, and both providers fall back to a plain ⏳ glyph.
+/// `hourglass(remainingSeconds, windowHours)` — the sand level needs both the time left and
+/// the length of the window it is measured against.
+enum BarIcon: Equatable { case none, hourglass(Int, Int), spinner }
+
+struct BarRender: Equatable { let segments: [Seg]; let icon: BarIcon }
+
+/// Menu bar text for a single provider — the historical format: `s14% · w25% · ⏳3h58m`.
+private func singleBar(_ u: Usage?, compact: Bool, animations: Bool, now: Date) -> BarRender {
+    guard let u = u else { return BarRender(segments: [Seg(text: "Claude --", level: .critical)], icon: .none) }
+    // Signed out: the numbers are unknowable until the user signs in, so make the bar itself
+    // the call to action instead of showing figures we can no longer refresh.
+    if isLoggedOut(u) { return BarRender(segments: [Seg(text: "⚠ Sign in", level: .critical)], icon: .none) }
+    let s = u.sessionPct.map(String.init) ?? "?"
+    let w = u.weeklyPct.map(String.init) ?? "?"
+    // Otherwise untrusted (collector stopped or failing): dim and mark, don't imply the old
+    // numbers are live.
+    if isDataUntrusted(u, now: now) {
+        let body = compact ? "⚠ s\(s)%" : "⚠ s\(s)% · w\(w)%"
+        return BarRender(segments: [Seg(text: body, level: .dim)], icon: .none)
+    }
+    let maxSecs = sessionMaxSeconds(u)
+    var segs: [Seg] = [Seg(text: "s\(s)%", level: level(forPct: u.sessionPct))]
+    if !compact {
+        segs.append(Seg(text: " · ", level: .normal))
+        segs.append(Seg(text: "w\(w)%", level: level(forPct: u.weeklyPct)))
+    }
+    guard let r = remainingTime(epoch: u.sessionEpoch, maxSeconds: maxSecs, short: true, now: now) else {
+        return BarRender(segments: segs, icon: .none)
+    }
+    if r.resetting {
+        segs.append(Seg(text: animations ? " · resetting" : " · ↻ resetting", level: .normal))
+        return BarRender(segments: segs, icon: animations ? .spinner : .none)
+    }
+    let timeLvl = timeLevel(epoch: u.sessionEpoch, now: now)
+    if animations, let epoch = u.sessionEpoch {
+        segs.append(Seg(text: " · ", level: .normal))
+        segs.append(Seg(text: r.text, level: timeLvl))
+        let windowHours = max(1, Int((sessionWindowSeconds(u) / 3600).rounded()))
+        return BarRender(segments: segs, icon: .hourglass(Int(epoch - now.timeIntervalSince1970), windowHours))
+    }
+    segs.append(Seg(text: " · ⏳", level: .normal))
+    segs.append(Seg(text: r.text, level: timeLvl))
+    return BarRender(segments: segs, icon: .none)
+}
+
+/// One provider's share of a two-provider menu bar: `C 14% ⏳3h58m`. Weekly is dropped here —
+/// four percentages plus two clocks is more width than a menu bar should take, so weekly
+/// lives in the dropdown and the tooltip.
+private func dualPart(_ p: Provider, _ u: Usage?, compact: Bool, animations: Bool, now: Date) -> [Seg] {
+    let tag = Seg(text: "\(p.tag) ", level: .dim)
+    guard let u = u else { return [tag, Seg(text: "--", level: .critical)] }
+    if isLoggedOut(u) { return [tag, Seg(text: "⚠", level: .critical)] }
+    let pct = u.sessionPct.map { "\($0)%" } ?? "?%"
+    if isDataUntrusted(u, now: now) { return [tag, Seg(text: "⚠\(pct)", level: .dim)] }
+    var segs = [tag, Seg(text: pct, level: level(forPct: u.sessionPct))]
+    guard !compact else { return segs }
+    guard let r = remainingTime(epoch: u.sessionEpoch, maxSeconds: sessionMaxSeconds(u), short: true, now: now)
+    else { return segs }
+    if r.resetting {
+        segs.append(Seg(text: " ↻", level: .normal))
+    } else {
+        // With animations on this run is drawn as the same minimal hourglass the
+        // single-provider bar puts in the image slot, inline this time so both providers can
+        // have one. Off, it stays the plain ⏳ glyph.
+        let hg = animations ? u.sessionEpoch.map {
+            HourglassSpec(remaining: Int($0 - now.timeIntervalSince1970),
+                          windowHours: max(1, Int((sessionWindowSeconds(u) / 3600).rounded())))
+        } : nil
+        segs.append(Seg(text: " ⏳", level: .normal, hourglass: hg))
+        segs.append(Seg(text: r.text, level: timeLevel(epoch: u.sessionEpoch, now: now)))
+    }
+    return segs
+}
+
+/// The complete menu bar for the current readings and options.
+///   - one provider  → the historical format, drawn hourglass and reset spinner included
+///   - two providers → `C 14% ⏳3h58m · X 83% ⏳2h47m`, text glyphs only (one image slot)
+/// A `codexOnly` bar falls back to Claude when Codex has nothing to show, so the bar is
+/// never blank just because the second CLI isn't signed in.
+func menuBarRender(claude: Usage?, codex: Usage?, mode: BarMode, compact: Bool,
+                   animations: Bool, now: Date = Date()) -> BarRender {
+    let codexOK = isCodexAvailable(codex)
+    switch mode {
+    case .claudeOnly:
+        return singleBar(claude, compact: compact, animations: animations, now: now)
+    case .codexOnly:
+        guard codexOK else { return singleBar(claude, compact: compact, animations: animations, now: now) }
+        return singleBar(codex, compact: compact, animations: animations, now: now)
+    case .both:
+        guard codexOK else { return singleBar(claude, compact: compact, animations: animations, now: now) }
+        var segs = dualPart(.claude, claude, compact: compact, animations: animations, now: now)
+        segs.append(Seg(text: " · ", level: .dim))
+        segs.append(contentsOf: dualPart(.codex, codex, compact: compact, animations: animations, now: now))
+        return BarRender(segments: segs, icon: .none)
+    }
+}
+
+/// Plain-text version of a rendered bar — used for "Copy status".
+func barText(_ r: BarRender) -> String { r.segments.map { $0.text }.joined() }
+
+// MARK: - Dropdown / tooltip text
+
+/// The detail lines for one provider, as they appear in the dropdown and the tooltip.
+/// Nil-safe and source-agnostic: it reads whichever fields the provider's collector filled in.
+func detailLines(_ p: Provider, _ u: Usage, now: Date = Date()) -> [String] {
+    // No provider name here: the caller adds one when there are two providers to tell apart.
+    if isLoggedOut(u) { return ["Signed out — usage tracking is paused"] }
+    var lines: [String] = []
+    let sMax = sessionMaxSeconds(u), wMax = weeklyMaxSeconds
+    let s = u.sessionPct.map(String.init) ?? "?"
+    let sRem = remainingTime(epoch: u.sessionEpoch, maxSeconds: sMax, short: false, now: now)?.text
+        ?? u.sessionReset.map { "resets \($0)" } ?? "reset time unknown"
+    lines.append("Session: \(s)% used · \(sRem)")
+    let w = u.weeklyPct.map(String.init) ?? "?"
+    let wRem = remainingTime(epoch: u.weeklyEpoch, maxSeconds: wMax, short: false, now: now)?.text
+        ?? u.weeklyReset.map { "resets \($0)" } ?? "reset time unknown"
+    lines.append(p == .claude ? "Weekly (all models): \(w)% used · \(wRem)"
+                              : "Weekly: \(w)% used · \(wRem)")
+    if let ml = u.modelLabel, let mp = u.modelPct { lines.append("Weekly (\(ml)): \(mp)%") }
+    if let plan = u.plan {
+        var line = "Plan: \(plan)"
+        if let c = u.resetCredits, c > 0 { line += " · \(c) rate-limit reset\(c == 1 ? "" : "s") available" }
+        lines.append(line)
+    }
+    return lines
+}
+
+/// Hover text for the status item: every available provider, then freshness.
+func tooltipText(claude: Usage?, codex: Usage?, now: Date = Date()) -> String {
+    var lines: [String] = []
+    let showCodex = isCodexAvailable(codex)
+    func block(_ p: Provider, _ u: Usage) {
+        // Prefix each line with the provider only when there are two blocks to tell apart.
+        let body = detailLines(p, u, now: now)
+        lines.append(contentsOf: showCodex ? body.map { "\(p.title) · \($0)" } : body)
+        if let ca = u.collectedAt, !showCodex { lines.append("Updated: \(ca)") }
+        if isStale(checkedAt: u.checkedAt, now: now) {
+            lines.append("⚠ \(p.title): data may be stale — the collector daemon may have stopped.")
+        } else if isDataUntrusted(u, now: now), !isLoggedOut(u) {
+            lines.append("⚠ \(p.title): not updating — the last collection failed\(u.error.map { " (\($0))" } ?? "").")
+        }
+    }
+    if let c = claude {
+        if isLoggedOut(c), !showCodex {
+            return "Claude Code is signed out — usage tracking is paused.\n"
+                 + "Click the menu bar item and choose \"Sign in to Claude…\"."
+        }
+        block(.claude, c)
+    } else {
+        lines.append("Claude: no data (daemon not running?)")
+    }
+    if showCodex, let x = codex { block(.codex, x) }
+    return lines.joined(separator: "\n")
 }

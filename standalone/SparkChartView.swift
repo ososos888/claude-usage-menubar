@@ -1,27 +1,49 @@
 import AppKit
 
-// A cumulative usage chart for the current session. Used both small (top of the dropdown)
-// and large (the enlarge window). Both axes are fixed so the shape is comparable between
-// sessions: x is the 5-hour session window labeled 0h…5h from the reset, y is the full
-// 0…100% budget with solid gridlines every 25%. The line covers only actually-measured
-// samples (unmeasured parts stay blank). Fonts/strokes scale with the view height.
-final class SparkChartView: NSView {
-    private let points: [HistoryPoint]
-    private let domainMin: Double   // session start (reset − window length)
-    private let domainMax: Double   // session end (reset time)
-    private let knownWindow: Bool   // false when the domain was inferred from the samples
-    private let onClick: (() -> Void)?
+// One provider's usage line: its samples plus the session window they belong to. The window
+// is what makes two providers comparable — Claude and Codex reset at different wall-clock
+// times, so the x-axis is "hours since this window's start", not absolute time.
+struct ChartSeries {
+    let points: [HistoryPoint]
+    let windowStart: Double
+    let windowEnd: Double
+    let color: NSColor
+    let label: String
 
-    init(points: [HistoryPoint], windowStart: Double, windowEnd: Double, frame: NSRect,
-         onClick: (() -> Void)? = nil) {
-        self.points = points
+    var windowKnown: Bool { windowEnd > windowStart && windowStart > 0 }
+    var windowLength: Double { windowKnown ? windowEnd - windowStart : 5 * 3600 }
+}
+
+// A cumulative usage chart for the current session. Used small (top of the dropdown) and
+// large (the enlarge window), with one series or two overlaid. Both axes are fixed so the
+// shape is comparable between sessions and between providers: x is the session window
+// labeled 0h…5h from the start, y is the full 0…100% budget with solid gridlines every 25%.
+// Each line covers only actually-measured samples (unmeasured parts stay blank).
+// Fonts/strokes scale with the view height.
+final class SparkChartView: NSView {
+    private let series: [ChartSeries]
+    private let title: String?
+    private let onClick: (() -> Void)?
+    private let domainSpan: Double   // seconds across the x-axis (the longest window shown)
+    private let knownWindow: Bool    // false when a domain had to be inferred from samples
+
+    init(series: [ChartSeries], title: String? = nil, frame: NSRect, onClick: (() -> Void)? = nil) {
+        self.series = series
+        self.title = title
         self.onClick = onClick
-        if windowEnd > windowStart, windowStart > 0 {
-            domainMin = windowStart; domainMax = windowEnd; knownWindow = true
-        } else {
-            domainMin = points.first?.t ?? 0; domainMax = (points.last?.t ?? 1) + 1; knownWindow = false
-        }
+        self.knownWindow = !series.isEmpty && series.allSatisfy { $0.windowKnown }
+        // Both providers run a 5-hour window today. Taking the longest keeps the axis honest
+        // if that ever differs: the shorter series simply stops before the right edge.
+        self.domainSpan = max(series.map { $0.windowLength }.max() ?? 5 * 3600, 1)
         super.init(frame: frame)
+    }
+    // Convenience for the single-provider case.
+    convenience init(points: [HistoryPoint], windowStart: Double, windowEnd: Double, frame: NSRect,
+                     color: NSColor = .controlAccentColor, label: String = "", title: String? = nil,
+                     onClick: (() -> Void)? = nil) {
+        self.init(series: [ChartSeries(points: points, windowStart: windowStart, windowEnd: windowEnd,
+                                       color: color, label: label)],
+                  title: title, frame: frame, onClick: onClick)
     }
     required init?(coder: NSCoder) { fatalError("not used") }
 
@@ -33,24 +55,33 @@ final class SparkChartView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let sc = min(max(bounds.height / 82, 1), 1.9)   // scale factor (1 small … ~1.9 large)
-        let leftAxis = 26 * sc, padTop = 8 * sc, padBottom = 16 * sc, padRight = 8 * sc
+        let leftAxis = 26 * sc, padTop = (title == nil ? 8 : 20) * sc, padBottom = 16 * sc, padRight = 8 * sc
         let plot = NSRect(x: bounds.minX + leftAxis, y: bounds.minY + padBottom,
                           width: bounds.width - leftAxis - padRight, height: bounds.height - padTop - padBottom)
         let small: [NSAttributedString.Key: Any] = [.font: NSFont.menuFont(ofSize: 9 * sc),
                                                      .foregroundColor: NSColor.secondaryLabelColor]
         let tiny: [NSAttributedString.Key: Any] = [.font: NSFont.menuFont(ofSize: 8 * sc),
                                                     .foregroundColor: NSColor.tertiaryLabelColor]
-        guard points.count >= 2, plot.width > 4, plot.height > 4 else {
+        if let t = title {
+            let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.menuFont(ofSize: 10 * sc),
+                                                        .foregroundColor: NSColor.secondaryLabelColor]
+            (t as NSString).draw(at: NSPoint(x: bounds.minX + 2, y: bounds.maxY - 15 * sc), withAttributes: attrs)
+        }
+        let drawable = series.filter { $0.points.count >= 2 }
+        guard !drawable.isEmpty, plot.width > 4, plot.height > 4 else {
             ("collecting…" as NSString).draw(at: NSPoint(x: plot.minX, y: bounds.midY - 6 * sc), withAttributes: small)
             return
         }
-        let tMin = domainMin, tMax = max(domainMax, domainMin + 1)
-        let span = tMax - tMin
-        func x(_ t: Double) -> CGFloat { plot.minX + plot.width * CGFloat((t - tMin) / span) }
-        let pcts = points.map { $0.pct }
-        // The y-axis is always the full 0…100% budget, so the line's height means the same
-        // thing between sessions (auto-scaling to the peak made 4% look like a full bar).
+        // The y-axis is always the full 0…100% budget, so a line's height means the same thing
+        // between sessions (auto-scaling to the peak made 4% look like a full bar).
         func y(_ p: Int) -> CGFloat { plot.minY + plot.height * CGFloat(p) / 100 }
+        // x is elapsed seconds into the series' own window, so two providers whose windows
+        // start at different times still line up by session progress.
+        func x(_ t: Double, _ s: ChartSeries) -> CGFloat {
+            let origin = s.windowKnown ? s.windowStart : (s.points.first?.t ?? t)
+            let frac = (t - origin) / domainSpan
+            return plot.minX + plot.width * CGFloat(min(max(frac, 0), 1))
+        }
 
         // solid gridlines every 25%; label them all unless the view is too short to fit
         let labelEvery25 = plot.height >= 70
@@ -69,9 +100,9 @@ final class SparkChartView: NSView {
         }
 
         // dotted hourly gridlines from the session start: 0h, 1h, 2h …
-        let hours = max(1, Int((span / 3600).rounded()))
+        let hours = max(1, Int((domainSpan / 3600).rounded()))
         for k in 0 ... hours {
-            let gx = x(tMin + Double(k) * 3600)
+            let gx = plot.minX + plot.width * CGFloat(min(Double(k) * 3600 / domainSpan, 1))
             let grid = NSBezierPath()
             grid.move(to: NSPoint(x: gx, y: plot.minY)); grid.line(to: NSPoint(x: gx, y: plot.maxY))
             grid.lineWidth = 0.75 * sc
@@ -87,20 +118,11 @@ final class SparkChartView: NSView {
         base.move(to: NSPoint(x: plot.minX, y: plot.minY)); base.line(to: NSPoint(x: plot.maxX, y: plot.minY))
         base.lineWidth = 1 * sc; base.stroke()
 
-        let line = NSBezierPath()
-        line.move(to: NSPoint(x: x(points[0].t), y: y(pcts[0])))
-        for p in points.dropFirst() { line.line(to: NSPoint(x: x(p.t), y: y(p.pct))) }
-        let area = line.copy() as! NSBezierPath
-        area.line(to: NSPoint(x: x(points.last!.t), y: plot.minY))
-        area.line(to: NSPoint(x: x(points[0].t), y: plot.minY))
-        area.close()
-        NSColor.controlAccentColor.withAlphaComponent(0.18).setFill(); area.fill()
-
         // Pace reference: spending the whole budget evenly over the window, 0% at 0h to 100%
         // at 5h. Below it, usage is on pace to last the session; above it, the budget runs out
-        // early. Only drawn when the real window is known — against a sample-inferred domain
-        // the slope would be meaningless. Dashed grey, and drawn over the fill (so it reads the
-        // same everywhere) but under the data line (which stays the subject).
+        // early. Only drawn when the real windows are known — against a sample-inferred domain
+        // the slope would be meaningless. Dashed grey, and drawn under the data lines (which
+        // stay the subject).
         if knownWindow {
             let pace = NSBezierPath()
             pace.move(to: NSPoint(x: plot.minX, y: y(0))); pace.line(to: NSPoint(x: plot.maxX, y: y(100)))
@@ -116,10 +138,41 @@ final class SparkChartView: NSView {
             }
         }
 
-        NSColor.controlAccentColor.setStroke(); line.lineWidth = 1.5 * sc; line.stroke()
-        let last = NSPoint(x: x(points.last!.t), y: y(pcts[pcts.count - 1]))
-        let r = 2.5 * sc
-        NSColor.controlAccentColor.setFill()
-        NSBezierPath(ovalIn: NSRect(x: last.x - r, y: last.y - r, width: r * 2, height: r * 2)).fill()
+        for s in drawable {
+            let pts = s.points
+            let line = NSBezierPath()
+            line.move(to: NSPoint(x: x(pts[0].t, s), y: y(pts[0].pct)))
+            for p in pts.dropFirst() { line.line(to: NSPoint(x: x(p.t, s), y: y(p.pct))) }
+            // Fill only a lone series: two translucent areas stacked on each other read as a
+            // third colour and hide where the lines actually cross.
+            if drawable.count == 1 {
+                let area = line.copy() as! NSBezierPath
+                area.line(to: NSPoint(x: x(pts.last!.t, s), y: plot.minY))
+                area.line(to: NSPoint(x: x(pts[0].t, s), y: plot.minY))
+                area.close()
+                s.color.withAlphaComponent(0.18).setFill(); area.fill()
+            }
+            s.color.setStroke(); line.lineWidth = 1.5 * sc; line.stroke()
+            let last = NSPoint(x: x(pts.last!.t, s), y: y(pts.last!.pct))
+            let r = 2.5 * sc
+            s.color.setFill()
+            NSBezierPath(ovalIn: NSRect(x: last.x - r, y: last.y - r, width: r * 2, height: r * 2)).fill()
+        }
+
+        // Legend, only when two lines share the plot and both are labeled.
+        guard drawable.count > 1 else { return }
+        var lx = plot.maxX - 3 * sc   // small inset so the last glyph can't touch the edge
+        for s in drawable.reversed() where !s.label.isEmpty {
+            let ns = s.label as NSString
+            let size = ns.size(withAttributes: tiny)
+            lx -= size.width
+            ns.draw(at: NSPoint(x: lx, y: plot.maxY - size.height - 1 * sc), withAttributes: tiny)
+            let dot = 4 * sc
+            lx -= dot + 3 * sc
+            s.color.setFill()
+            NSBezierPath(ovalIn: NSRect(x: lx, y: plot.maxY - size.height / 2 - dot / 2 - 1 * sc,
+                                        width: dot, height: dot)).fill()
+            lx -= 8 * sc
+        }
     }
 }

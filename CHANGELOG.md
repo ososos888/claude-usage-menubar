@@ -4,6 +4,59 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.8.0] - 2026-09-09
+
+### Added
+- **Codex usage next to Claude usage.** With the [Codex CLI](https://developers.openai.com/codex/cli/)
+  installed and signed in, the menu bar shows session usage and time left for each provider —
+  `C 14% ⏳3h58m · X 83% ⏳2h47m` — and the dropdown lists both under `CLAUDE` / `CODEX`
+  headers, with Codex's plan and any available rate-limit resets. Weekly percentages move to
+  the dropdown in the two-provider bar, since four percentages plus two clocks is more width
+  than a menu bar should take.
+  - **Source**: a new `collect-codex.sh` asks the Codex CLI's app-server for
+    `account/rateLimits/read` over JSON-RPC on stdio — the snapshot behind the Codex TUI's
+    `/status`, returning `primary` (rolling 5 h) and `secondary` (weekly) as
+    `usedPercent` + `resetsAt` + `windowDurationMins`. No thread and no turn is started, so it
+    **costs zero tokens** and, unlike `codex exec`, leaves nothing under `~/.codex/sessions`.
+    One collection takes ~1.5 s, and its own launchd agent (`com.user.codex-usage`) runs it
+    every minute.
+  - Reset times arrive as absolute epochs, so there is no date-string parsing on this path.
+  - The collector writes the same key names as `collect.sh`, so a single parser reads both
+    providers, and the session window length is read from the payload instead of assumed.
+- **A second trend chart.** Codex gets its own session-usage line, and a `Trend chart` submenu
+  chooses how the two are drawn: **two stacked charts** (default), **one overlaid chart** with a
+  legend, a single provider, or off. The x-axis is *hours since each provider's own reset*, so
+  windows that started at different wall-clock times still line up by session progress and can
+  be compared directly. The overlaid chart drops the area fill — two translucent areas stacked
+  on each other read as a third colour and hide where the lines cross.
+- **A `Menu bar` submenu** to pick which providers reach the bar (Claude + Codex / Claude only /
+  Codex only). `Codex only` falls back to Claude when Codex has nothing to show, so the bar is
+  never blank because a second CLI isn't signed in.
+- Usage alerts, reset notifications, the tooltip, VoiceOver text, "Copy status", and
+  "Open usage page" all cover both providers. Alerts are tracked per provider *and* metric, so
+  a Claude alert can't suppress the Codex one; `Copy status` now copies exactly what the bar
+  shows.
+
+### Changed
+- Menu bar and tooltip rendering moved out of `AppDelegate` into pure, unit-tested functions
+  (`menuBarRender`, `detailLines`, `tooltipText` in `UsageLogic.swift`). The single-provider
+  format is unchanged and pinned by tests.
+- With both providers on the bar there is no drawn hourglass: a status item has one image slot,
+  so it can only stand for one session window. Both providers use a plain ⏳ glyph instead, and
+  a resetting provider is marked inline with `↻`. Single-provider mode keeps the hourglass, its
+  reset spinner, and the refresh flip exactly as before.
+
+### Notes
+- **Codex is optional and silent when absent.** No CLI or nobody signed in hides the Codex half
+  entirely — no warning, no notification, no second sign-in prompt — and the widget behaves
+  exactly as it did before. Only Claude, which the widget is built around, still gets the
+  signed-out call to action.
+- The Codex app-server protocol is marked experimental by the CLI, so `account/rateLimits/read`
+  may be renamed or reshaped by a Codex release. The collector then writes `no_numbers` or
+  `rpc_error`, the Codex half disappears, and the Claude half is unaffected.
+- `update.command` registers the Codex launchd agent on installations that predate it, so
+  updating is enough — no reinstall needed.
+
 ## [1.7.0] - 2026-08-04
 
 ### Added

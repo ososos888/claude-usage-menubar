@@ -172,5 +172,171 @@ var hc = SessionHistory(windowEpoch: b, points: [])
 for i in 0 ..< 10 { hc = updatedHistory(hc, sessionEpoch: b, pct: i, now: b + Double(i) * 100, minInterval: 50, maxPoints: 5) }
 check(hc.points.count == 5, "history: capped to maxPoints")
 
+
+// MARK: Codex reading — the collector writes the same key names, plus its own extras
+let codexJSON = """
+{"session_pct":83,"session_reset_epoch":1788952298,"session_window_mins":300,
+ "weekly_all_pct":33,"weekly_all_reset_epoch":1789446032,"weekly_window_mins":10080,
+ "plan":"plus","reset_credits":2,"error":null,
+ "collected_at":"2026-09-09T08:29:02Z","checked_at":"2026-09-09T08:29:02Z"}
+"""
+if let x = Usage.parse(Data(codexJSON.utf8)) {
+    check(x.sessionPct == 83, "codex parse: sessionPct")
+    check(x.sessionEpoch == 1788952298, "codex parse: sessionEpoch")
+    check(x.sessionWindowMins == 300, "codex parse: session window mins")
+    check(x.weeklyPct == 33, "codex parse: weeklyPct")
+    check(x.weeklyWindowMins == 10080, "codex parse: weekly window mins")
+    check(x.plan == "plus", "codex parse: plan")
+    check(x.resetCredits == 2, "codex parse: reset credits")
+    check(x.modelLabel == nil, "codex parse: no Claude-only model row")
+} else {
+    check(false, "codex parse: valid JSON should decode")
+}
+// A Claude reading leaves the Codex-only fields nil, and vice versa.
+check(Usage.parse(["session_pct": 6]).plan == nil, "parse: plan absent → nil")
+check(Usage.parse(["session_pct": 6]).sessionWindowMins == nil, "parse: window mins absent → nil")
+
+// MARK: window lengths
+check(sessionWindowSeconds(nil) == 5 * 3600, "window: no reading → 5h fallback")
+check(sessionWindowSeconds(Usage.parse(["session_window_mins": 300])) == 5 * 3600, "window: 300 mins → 5h")
+check(sessionWindowSeconds(Usage.parse(["session_window_mins": 0])) == 5 * 3600, "window: 0 mins → fallback")
+check(sessionMaxSeconds(nil) == 6 * 3600, "windowMax: no reading → 6h fallback")
+check(sessionMaxSeconds(Usage.parse(["session_window_mins": 300])) == 6 * 3600, "windowMax: 5h window + 1h slack")
+check(sessionMaxSeconds(Usage.parse(["session_window_mins": 60])) == 2 * 3600, "windowMax: 1h window + 1h slack")
+
+// MARK: isCodexAvailable — Codex is optional and hides itself when there is nothing to show
+func codex(_ pct: Int? = 83, error: String? = nil, collectedAt: String? = nil,
+           checkedAt: String? = nil, epoch: Double? = nil) -> Usage {
+    var u = Usage()
+    u.sessionPct = pct; u.weeklyPct = 33; u.sessionWindowMins = 300
+    u.plan = "plus"; u.resetCredits = 2
+    u.error = error; u.collectedAt = collectedAt; u.checkedAt = checkedAt; u.sessionEpoch = epoch
+    return u
+}
+check(isCodexAvailable(nil) == false, "codex: no file → unavailable")
+check(isCodexAvailable(codex(error: "not_installed")) == false, "codex: CLI missing → unavailable")
+check(isCodexAvailable(codex(error: "logged_out")) == false, "codex: signed out → unavailable")
+check(isCodexAvailable(codex(nil, error: nil)) == true, "codex: weekly only still counts")
+check(isCodexAvailable(Usage()) == false, "codex: no numbers ever read → unavailable")
+check(isCodexAvailable(codex(error: "no_output")) == true,
+      "codex: a transient failure keeps the last good values visible")
+
+// MARK: chartProviders
+check(chartProviders(.off, codexAvailable: true).isEmpty, "chart: off → nothing")
+check(chartProviders(.stacked, codexAvailable: true) == [.claude, .codex], "chart: stacked → both")
+check(chartProviders(.overlay, codexAvailable: true) == [.claude, .codex], "chart: overlay → both")
+check(chartProviders(.stacked, codexAvailable: false) == [.claude], "chart: stacked, no codex → Claude")
+check(chartProviders(.codexOnly, codexAvailable: true) == [.codex], "chart: codex only")
+check(chartProviders(.codexOnly, codexAvailable: false) == [.claude],
+      "chart: codex only with no codex → falls back to Claude")
+check(chartProviders(.claudeOnly, codexAvailable: true) == [.claude], "chart: claude only")
+
+// MARK: menuBarRender — the single-provider format must not change
+let live = iso.string(from: now)
+func claudeU(session: Int? = 14, weekly: Int? = 25, error: String? = nil,
+             epoch: Double? = nil, collectedAt: String? = nil) -> Usage {
+    var u = Usage()
+    u.sessionPct = session; u.weeklyPct = weekly; u.error = error
+    u.sessionEpoch = epoch; u.collectedAt = collectedAt ?? live; u.checkedAt = live
+    return u
+}
+func bar(_ c: Usage?, _ x: Usage? = nil, mode: BarMode = .both, compact: Bool = false,
+         animations: Bool = false) -> String {
+    barText(menuBarRender(claude: c, codex: x, mode: mode, compact: compact,
+                          animations: animations, now: now))
+}
+let in4h = now.timeIntervalSince1970 + 4 * H
+
+check(bar(nil) == "Claude --", "bar: no data at all")
+check(bar(claudeU(epoch: in4h)) == "s14% · w25% · ⏳4h0m", "bar: single provider keeps the old format")
+check(bar(claudeU(epoch: in4h), compact: true) == "s14% · ⏳4h0m", "bar: compact drops weekly")
+check(bar(claudeU(epoch: in4h), animations: true) == "s14% · w25% · 4h0m",
+      "bar: animated single provider drops the ⏳ glyph (the drawn hourglass replaces it)")
+check(menuBarRender(claude: claudeU(epoch: in4h), codex: nil, mode: .both, compact: false,
+                    animations: true, now: now).icon == .hourglass(4 * 3600, 5),
+      "bar: single provider asks for the drawn hourglass")
+check(menuBarRender(claude: claudeU(epoch: in4h), codex: nil, mode: .both, compact: false,
+                    animations: false, now: now).icon == BarIcon.none,
+      "bar: animations off → no image")
+check(bar(claudeU(error: "logged_out")) == "⚠ Sign in", "bar: signed out → call to action")
+check(bar(claudeU(collectedAt: oldISO)) == "⚠ s14% · w25%", "bar: not updating → dimmed and marked")
+check(menuBarRender(claude: claudeU(epoch: now.timeIntervalSince1970 - 10), codex: nil, mode: .both,
+                    compact: false, animations: true, now: now).icon == .spinner,
+      "bar: mid-reset asks for the spinner")
+
+// MARK: menuBarRender — two providers
+let cx = codex(83, collectedAt: live, checkedAt: live, epoch: now.timeIntervalSince1970 + 2 * H)
+check(bar(claudeU(epoch: in4h), cx) == "C 14% ⏳4h0m · X 83% ⏳2h0m", "bar: both providers")
+check(bar(claudeU(epoch: in4h), cx, compact: true) == "C 14% · X 83%", "bar: both, compact")
+check(menuBarRender(claude: claudeU(epoch: in4h), codex: cx, mode: .both, compact: false,
+                    animations: true, now: now).icon == BarIcon.none,
+      "bar: two providers never take the single image slot")
+// The two-provider bar draws the same minimal hourglass the single-provider bar puts in the
+// image slot, inline so both providers can have one. `text` stays the ⏳ stand-in, which is
+// what "Copy status" and VoiceOver read.
+func hourglasses(_ c: Usage?, _ x: Usage?, animations: Bool) -> [HourglassSpec] {
+    menuBarRender(claude: c, codex: x, mode: .both, compact: false,
+                  animations: animations, now: now).segments.compactMap { $0.hourglass }
+}
+check(hourglasses(claudeU(epoch: in4h), cx, animations: true)
+        == [HourglassSpec(remaining: 4 * 3600, windowHours: 5),
+            HourglassSpec(remaining: 2 * 3600, windowHours: 5)],
+      "bar: both providers each get an inline hourglass, with their own time left")
+check(hourglasses(claudeU(epoch: in4h), cx, animations: false).isEmpty,
+      "bar: animations off → plain ⏳ text, no drawn icon")
+check(hourglasses(claudeU(epoch: now.timeIntervalSince1970 - 10), cx, animations: true).count == 1,
+      "bar: a resetting provider shows ↻ instead of an hourglass")
+check(hourglasses(claudeU(epoch: in4h), cx, animations: true).map { $0.windowHours } == [5, 5],
+      "bar: window hours come from each provider's own window")
+check(bar(claudeU(epoch: in4h), cx, mode: .claudeOnly) == "s14% · w25% · ⏳4h0m",
+      "bar: claude only ignores an available Codex")
+check(bar(claudeU(epoch: in4h), cx, mode: .codexOnly) == "s83% · w33% · ⏳2h0m",
+      "bar: codex only shows Codex in the single-provider format")
+check(bar(claudeU(epoch: in4h), codex(error: "logged_out"), mode: .codexOnly) == "s14% · w25% · ⏳4h0m",
+      "bar: codex only with no Codex falls back to Claude, never blank")
+check(bar(claudeU(error: "logged_out"), cx) == "C ⚠ · X 83% ⏳2h0m",
+      "bar: a signed-out Claude shrinks to a warning, Codex keeps reporting")
+check(bar(claudeU(epoch: in4h, collectedAt: oldISO), cx) == "C ⚠14% · X 83% ⏳2h0m",
+      "bar: a stalled provider is marked without hiding the other")
+check(bar(nil, cx) == "C -- · X 83% ⏳2h0m", "bar: missing Claude cache with Codex present")
+check(bar(claudeU(epoch: now.timeIntervalSince1970 - 10), cx) == "C 14% ↻ · X 83% ⏳2h0m",
+      "bar: resetting provider marked inline (no spinner with two providers)")
+
+// MARK: detailLines
+let cLines = detailLines(.claude, claudeU(epoch: in4h), now: now)
+check(cLines == ["Session: 14% used · 4h 0m left", "Weekly (all models): 25% used · reset time unknown"],
+      "detail: Claude rows")
+var withModel = claudeU(epoch: in4h)
+withModel.modelLabel = "Fable"; withModel.modelPct = 0
+check(detailLines(.claude, withModel, now: now).count == 3, "detail: Claude per-model row appears")
+let xLines = detailLines(.codex, cx, now: now)
+check(xLines[0] == "Session: 83% used · 2h 0m left", "detail: Codex session row")
+check(xLines[1].hasPrefix("Weekly: 33% used"), "detail: Codex weekly row has no model qualifier")
+check(xLines[2] == "Plan: plus · 2 rate-limit resets available", "detail: Codex plan row")
+var oneCredit = cx; oneCredit.resetCredits = 1
+check(detailLines(.codex, oneCredit, now: now)[2] == "Plan: plus · 1 rate-limit reset available",
+      "detail: reset credit count is singular at 1")
+var noCredit = cx; noCredit.resetCredits = 0
+check(detailLines(.codex, noCredit, now: now)[2] == "Plan: plus", "detail: no credits → plan only")
+check(detailLines(.claude, claudeU(error: "logged_out"), now: now)
+        == ["Signed out — usage tracking is paused"], "detail: signed out says so")
+check(tooltipText(claude: claudeU(error: "logged_out"), codex: cx, now: now)
+        .contains("Claude · Signed out"),
+      "tooltip: a signed-out Claude is named once, not twice, alongside Codex")
+
+// MARK: tooltipText
+let tip = tooltipText(claude: claudeU(epoch: in4h), codex: cx, now: now)
+check(tip.contains("Claude · Session: 14% used"), "tooltip: prefixes providers when there are two")
+check(tip.contains("Codex · Session: 83% used"), "tooltip: includes Codex")
+let soloTip = tooltipText(claude: claudeU(epoch: in4h), codex: nil, now: now)
+check(!soloTip.contains("Claude · "), "tooltip: no prefix with a single provider")
+check(soloTip.contains("Updated: "), "tooltip: single provider reports its collection time")
+check(tooltipText(claude: claudeU(error: "logged_out"), codex: nil, now: now).contains("Sign in to Claude"),
+      "tooltip: signed out points at the fix")
+check(tooltipText(claude: nil, codex: cx, now: now).contains("Claude: no data"),
+      "tooltip: a missing Claude cache is stated, not hidden")
+check(tooltipText(claude: claudeU(epoch: in4h, collectedAt: oldISO), codex: cx, now: now)
+        .contains("⚠ Claude: not updating"), "tooltip: names which provider stalled")
+
 print("\n\(total - failed)/\(total) passed" + (failed == 0 ? " ✅" : "  (\(failed) FAILED) ❌"))
 exit(failed == 0 ? 0 : 1)

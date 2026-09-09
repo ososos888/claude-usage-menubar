@@ -1,7 +1,9 @@
 // ClaudeUsageBar — a native menu bar app that works without SwiftBar.
-// It only reads ~/.claude-usage/usage.json (refreshed by the launchd daemon collect.sh)
-// and renders it in the menu bar. Pure logic lives in UsageLogic.swift; the hourglass
-// drawing in HourglassIcon.swift; the app entry point in main.swift.
+// It only reads the JSON caches under ~/.claude-usage (refreshed by the launchd daemons
+// collect.sh for Claude and collect-codex.sh for Codex) and renders them in the menu bar.
+// Codex is optional: when its CLI is missing or signed out the app is Claude-only, exactly
+// as before. Pure logic lives in UsageLogic.swift; the hourglass drawing in
+// HourglassIcon.swift; the trend chart in SparkChartView.swift; the entry point in main.swift.
 import Cocoa
 import UserNotifications
 
@@ -10,21 +12,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var timer: Timer?
     private var napActivity: NSObjectProtocol?   // opt out of App Nap so the timer keeps firing
     private let jsonURL = URL(fileURLWithPath: NSString(string: "~/.claude-usage/usage.json").expandingTildeInPath)
+    private let codexJSONURL = URL(fileURLWithPath: NSString(string: "~/.claude-usage/codex-usage.json").expandingTildeInPath)
     private let collectPath = NSString(string: "~/.claude-usage/collect.sh").expandingTildeInPath
+    private let codexCollectPath = NSString(string: "~/.claude-usage/collect-codex.sh").expandingTildeInPath
     private let historyURL = URL(fileURLWithPath: NSString(string: "~/.claude-usage/session-history.json").expandingTildeInPath)
-    private var history = SessionHistory(windowEpoch: nil, points: [])  // session usage trend
+    private let codexHistoryURL = URL(fileURLWithPath: NSString(string: "~/.claude-usage/codex-session-history.json").expandingTildeInPath)
+    private var history = SessionHistory(windowEpoch: nil, points: [])       // Claude session trend
+    private var codexHistory = SessionHistory(windowEpoch: nil, points: [])  // Codex session trend
     private var lastGood: Usage?                 // keep last successful read to avoid flicker
-    private let sessionMax = 6 * 3600            // session window is 5h; treat >6h as a mid-reset artifact
-    private let weeklyMax  = 8 * 86400           // weekly window is 7d; treat >8d as a mid-reset artifact
+    private var codexLastGood: Usage?
+    // Claude's line keeps the system accent colour; Codex needs a hue that stays legible
+    // against every accent choice when the two lines share one chart.
+    private let codexColor = NSColor.systemTeal
 
     // Animations (toggleable, persisted). Spinner while resetting; a pulse when %s change.
     private var animationsEnabled = UserDefaults.standard.object(forKey: "animationsEnabled") as? Bool ?? true
     private var spinTimer: Timer?
     private var spinFrame = 0
-    private var prevSession: Int?                // last shown session % (for change detection)
-    private var prevWeekly: Int?                 // last shown weekly %
-    private var prevSessionEpoch: Double?        // last seen session reset time (for reset detection)
-    private var lastNotifiedResetEpoch: Double?  // reset window we already notified for (dedup)
+    // Per provider, so one provider's numbers can't mask the other's change or reset.
+    private var prevSession: [Provider: Int] = [:]        // last shown session % (change detection)
+    private var prevWeekly: [Provider: Int] = [:]         // last shown weekly %
+    private var prevSessionEpoch: [Provider: Double] = [:]      // last seen session reset time
+    private var lastNotifiedResetEpoch: [Provider: Double] = [:] // reset already notified (dedup)
     private var loggedOutNotified = false        // signed-out notice already sent (dedup)
     private var flipTimer: Timer?                // one-off hourglass flip on manual refresh
     private var flipFrame = 0
@@ -35,19 +44,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Usage alerts (opt-in, persisted): notify once when a metric crosses the threshold.
     private var alertsEnabled = UserDefaults.standard.bool(forKey: "usageAlerts")
     private var alertThreshold = UserDefaults.standard.object(forKey: "alertThreshold") as? Int ?? 80
-    private var sessionAlerted = false
-    private var weeklyAlerted = false
+    // Keys are "<provider>.<metric>": a Claude alert must not suppress the Codex one.
+    private var alerted: Set<String> = []
     // Auto-start at login is driven by the launchd agent; toggle enables/disables it.
     private let agentLabel = "com.ososos888.claudeusagebar"
     private lazy var startAtLoginEnabled: Bool = queryStartAtLogin()
 
     // Compact mode: show only the session item to save menu bar width.
     private var compactEnabled = UserDefaults.standard.bool(forKey: "compactMode")
+    // Which providers reach the menu bar, and how the trend chart(s) are drawn.
+    private var barMode = BarMode(rawValue: UserDefaults.standard.string(forKey: "barMode") ?? "") ?? .both
+    private var chartMode = ChartMode(rawValue: UserDefaults.standard.string(forKey: "chartMode") ?? "") ?? .stacked
     // While the menu is open the status button is highlighted; drop explicit colors then so
     // the text inverts properly on the blue highlight.
     private var menuOpen = false
     private var chartWindow: NSWindow?           // reused enlarge-graph window
     private let repoURL = "https://github.com/ososos888/claude-usage-menubar"
+    private let claudeUsageURL = "https://claude.ai/settings/usage"
+    private let codexUsageURL = "https://chatgpt.com/codex/settings/usage"
     private let latestReleaseAPI = "https://api.github.com/repos/ososos888/claude-usage-menubar/releases/latest"
     private var appVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?" }
     private var repoPath: String? { Bundle.main.object(forInfoDictionaryKey: "SourceRepoPath") as? String }
@@ -58,13 +72,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         statusItem.menu = menu
         if alertsEnabled { requestNotificationAuth() }
-        if let d = try? Data(contentsOf: historyURL),
-           var h = try? JSONDecoder().decode(SessionHistory.self, from: d) {
-            h.points = h.points.filter { $0.pct >= 0 && $0.pct <= 100 && $0.t.isFinite && $0.t > 0 }  // drop corrupt
-            var mx = 0   // make older raw-valued history cumulative so the line reads monotonic
-            h.points = h.points.map { mx = max(mx, $0.pct); return HistoryPoint(t: $0.t, pct: mx) }
-            history = h
-        }
+        history = loadHistory(historyURL) ?? history
+        codexHistory = loadHistory(codexHistoryURL) ?? codexHistory
         // Prevent App Nap from suspending our refresh timer while the Mac is awake
         // (idle system sleep is still allowed — we don't keep the Mac awake).
         napActivity = ProcessInfo.processInfo.beginActivity(
@@ -80,9 +89,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // MARK: - Data
-    private func load() -> Usage? {
-        guard let data = try? Data(contentsOf: jsonURL) else { return nil }
+    private func load(_ url: URL) -> Usage? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
         return Usage.parse(data)
+    }
+
+    /// Read a persisted trend history, dropping anything corrupt. Returns nil when the file is
+    /// missing or unreadable, so the caller keeps its in-memory value.
+    private func loadHistory(_ url: URL) -> SessionHistory? {
+        guard let d = try? Data(contentsOf: url),
+              var h = try? JSONDecoder().decode(SessionHistory.self, from: d) else { return nil }
+        h.points = h.points.filter { $0.pct >= 0 && $0.pct <= 100 && $0.t.isFinite && $0.t > 0 }
+        var mx = 0   // make older raw-valued history cumulative so the line reads monotonic
+        h.points = h.points.map { mx = max(mx, $0.pct); return HistoryPoint(t: $0.t, pct: mx) }
+        return h
+    }
+
+    /// The Codex reading, but only when it's worth showing (installed, signed in, has numbers).
+    private func codexUsage() -> Usage? { isCodexAvailable(codexLastGood) ? codexLastGood : nil }
+
+    /// Every provider currently on screen, in display order.
+    private func shownProviders() -> [(Provider, Usage)] {
+        var out: [(Provider, Usage)] = []
+        if let c = lastGood { out.append((.claude, c)) }
+        if let x = codexUsage() { out.append((.codex, x)) }
+        return out
+    }
+
+    /// What the menu bar should look like right now.
+    private func currentRender(now: Date = Date()) -> BarRender {
+        menuBarRender(claude: lastGood, codex: codexUsage(), mode: barMode,
+                      compact: compactEnabled, animations: animationsEnabled, now: now)
     }
 
     // Map a severity level to a menu bar color (nil = default/adaptive).
@@ -91,6 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .normal: return nil
         case .warn: return .systemOrange
         case .critical: return .systemRed
+        case .dim: return .secondaryLabelColor
         }
     }
 
@@ -98,163 +136,142 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func refresh() {
         // Adopt fresh reads, but ignore an oscillation back to an already-expired window
         // (/usage flips between the just-reset old window and the new one for a while).
-        if let fresh = load(), shouldAdopt(newEpoch: fresh.sessionEpoch, lastEpoch: lastGood?.sessionEpoch) {
+        if let fresh = load(jsonURL), shouldAdopt(newEpoch: fresh.sessionEpoch, lastEpoch: lastGood?.sessionEpoch) {
             lastGood = fresh
         }
-        guard let u = lastGood else {
-            statusItem.button?.toolTip = "No data (daemon not running?)"
-            setTitle("Claude --", color: .systemRed)
-            rebuildMenu(nil)
-            return
+        if let fresh = load(codexJSONURL), shouldAdopt(newEpoch: fresh.sessionEpoch, lastEpoch: codexLastGood?.sessionEpoch) {
+            codexLastGood = fresh
         }
-        let oldEpoch = prevSessionEpoch
-        // Pulse only when the meaningful values (%) change, not when the ⏳ minute ticks.
-        let changed = animationsEnabled
-            && ((prevSession != nil && prevSession != u.sessionPct)
-                || (prevWeekly != nil && prevWeekly != u.weeklyPct))
-        prevSession = u.sessionPct
-        prevWeekly = u.weeklyPct
-        prevSessionEpoch = u.sessionEpoch
-
-        // Only animate a reset, poll fast, or record history while collection is succeeding.
-        // A frozen reset epoch (signed out, collector broken) elapses by itself and would
-        // otherwise spin the icon forever and back-fill the chart with re-read stale values.
-        let untrusted = isDataUntrusted(u)
-
-        // Record the session-usage trend; persist only when it actually changes.
-        if !untrusted {
-            let beforeCount = history.points.count, beforeWindow = history.windowEpoch
-            history = updatedHistory(history, sessionEpoch: u.sessionEpoch, pct: u.sessionPct,
-                                     now: Date().timeIntervalSince1970)
-            if history.points.count != beforeCount || history.windowEpoch != beforeWindow {
-                if let d = try? JSONEncoder().encode(history) { try? d.write(to: historyURL) }
-            }
+        let shown = shownProviders()
+        var changed = false
+        var resets: [Provider: Double] = [:]
+        var needFastPoll = false
+        for (p, u) in shown {
+            let (ch, reset) = absorb(p, u)
+            if animationsEnabled && ch { changed = true }
+            if let r = reset { resets[p] = r }
+            // Only animate a reset, poll fast, or record history while collection is
+            // succeeding. A frozen reset epoch (signed out, collector broken) elapses by
+            // itself and would otherwise spin the icon forever and back-fill the chart with
+            // re-read stale values.
+            guard !isDataUntrusted(u) else { continue }
+            recordHistory(p, u)
+            // Poll fast in the last ~90s before/during a reset, and while the reset time is
+            // missing (right after a reset /usage reports "0% used" with no reset time for a
+            // bit).
+            let secs = u.sessionEpoch.map { Int($0 - Date().timeIntervalSince1970) }
+            if showResetting(u, maxSeconds: sessionMaxSeconds(u))
+                || (secs.map { $0 > 0 && $0 <= 90 } ?? false)
+                || u.sessionEpoch == nil { needFastPoll = true }
         }
 
-        statusItem.button?.toolTip = toolTipText(u)
-        statusItem.button?.setAccessibilityLabel(accessibilityText(u))
+        statusItem.button?.toolTip = tooltipText(claude: lastGood, codex: codexUsage())
+        statusItem.button?.setAccessibilityLabel(accessibilityText())
         updateStatusItem()
-        rebuildMenu(u)
+        rebuildMenu()
         if alertsEnabled {
-            checkAlerts(u)
-            // Fire once when the reset time jumps ~a full window (~5h) forward (a real reset),
-            // and never twice for the same new window — dedup guards against any residual flip.
-            if let ne = u.sessionEpoch, let oe = oldEpoch, ne - oe > 3 * 3600,
-               lastNotifiedResetEpoch == nil || abs(ne - lastNotifiedResetEpoch!) > 3600 {
-                postNotification(title: "Claude usage", body: "Session reset — full capacity available")
-                lastNotifiedResetEpoch = ne
+            for (p, u) in shown {
+                checkAlerts(p, u)
+                // Fire once when the reset time jumps ~a full window (~5h) forward (a real
+                // reset), and never twice for the same new window — dedup guards against any
+                // residual flip.
+                guard let ne = resets[p] else { continue }
+                let last = lastNotifiedResetEpoch[p]
+                if last == nil || abs(ne - last!) > 3600 {
+                    postNotification(title: "\(p.title) usage", body: "Session reset — full capacity available")
+                    lastNotifiedResetEpoch[p] = ne
+                }
             }
         }
 
         // Signed out: say so once per episode. Unlike every other failure this one can't
         // clear up on its own — it needs the user to sign in — so it's worth a notification
-        // even when the opt-in usage alerts are off.
-        if shouldNotifyLogout(loggedOut: isLoggedOut(u), alreadyNotified: &loggedOutNotified) {
+        // even when the opt-in usage alerts are off. Only Claude gets this: Codex is opt-in
+        // by merely being installed, so its absence is silent by design.
+        let claudeOut = lastGood.map(isLoggedOut) ?? false
+        if shouldNotifyLogout(loggedOut: claudeOut, alreadyNotified: &loggedOutNotified) {
             postNotification(title: "Claude usage — signed out",
                              body: "Claude Code is signed out, so usage tracking is paused. Sign in from the menu bar.")
         }
 
-        let resetting = showResetting(u, maxSeconds: sessionMax)
-        if animationsEnabled && resetting { startSpinner() } else { stopSpinner() }
+        if animationsEnabled && currentRender().icon == .spinner { startSpinner() } else { stopSpinner() }
         if changed { pulse() }
-
-        // Poll fast in the last ~90s before/during a reset, and while the reset time is missing
-        // (right after a reset /usage reports "0% used" with no reset time for a bit). Never
-        // while the data is untrusted: those conditions would latch and hammer the collector.
-        let secs = u.sessionEpoch.map { Int($0 - Date().timeIntervalSince1970) }
-        let needFastPoll = !untrusted
-            && (resetting
-                || (secs.map { $0 > 0 && $0 <= 90 } ?? false)
-                || u.sessionEpoch == nil)
+        // Never fast-poll on untrusted data: those conditions would latch and hammer the
+        // collectors.
         if needFastPoll { startResetPolling() } else { stopResetPolling() }
     }
 
-    private func toolTipText(_ u: Usage) -> String {
-        if isLoggedOut(u) {
-            return "Claude Code is signed out — usage tracking is paused.\n"
-                 + "Click the menu bar item and choose \"Sign in to Claude…\"."
-        }
-        var lines: [String] = []
-        let s = u.sessionPct.map(String.init) ?? "?"
-        let sRem = remainingTime(epoch: u.sessionEpoch, maxSeconds: sessionMax, short: false)?.text ?? "resets \(u.sessionReset ?? "?")"
-        lines.append("Session: \(s)% used · \(sRem)")
-        let w = u.weeklyPct.map(String.init) ?? "?"
-        let wRem = remainingTime(epoch: u.weeklyEpoch, maxSeconds: weeklyMax, short: false)?.text ?? "resets \(u.weeklyReset ?? "?")"
-        lines.append("Weekly (all models): \(w)% used · \(wRem)")
-        if let ml = u.modelLabel, let mp = u.modelPct { lines.append("Weekly (\(ml)): \(mp)%") }
-        if let ca = u.collectedAt { lines.append("Updated: \(ca)") }
-        if isStale(checkedAt: u.checkedAt) {
-            lines.append("⚠ Data may be stale — the collector daemon may have stopped.")
-        } else if isDataUntrusted(u) {
-            lines.append("⚠ Not updating — the last collection failed\(u.error.map { " (\($0))" } ?? "").")
-        }
-        return lines.joined(separator: "\n")
+    /// Fold one provider's fresh reading into the bookkeeping behind the pulse animation and
+    /// the reset notification. Returns whether a percentage changed and, when the session
+    /// window jumped a whole window forward, the new reset epoch.
+    private func absorb(_ p: Provider, _ u: Usage) -> (changed: Bool, resetEpoch: Double?) {
+        // Pulse only when the meaningful values (%) change, not when the ⏳ minute ticks.
+        let changed = (prevSession[p] != nil && prevSession[p] != u.sessionPct)
+                   || (prevWeekly[p] != nil && prevWeekly[p] != u.weeklyPct)
+        let old = prevSessionEpoch[p]
+        prevSession[p] = u.sessionPct
+        prevWeekly[p] = u.weeklyPct
+        prevSessionEpoch[p] = u.sessionEpoch
+        var reset: Double?
+        if let ne = u.sessionEpoch, let oe = old, ne - oe > 3 * 3600 { reset = ne }
+        return (changed, reset)
     }
 
-    private func accessibilityText(_ u: Usage) -> String {
-        if isLoggedOut(u) { return "Claude usage. Signed out. Usage tracking is paused; sign in from this menu." }
-        let s = u.sessionPct.map(String.init) ?? "unknown"
-        let w = u.weeklyPct.map(String.init) ?? "unknown"
-        var t = "Claude usage. Session \(s) percent. Weekly \(w) percent."
-        if let r = remainingTime(epoch: u.sessionEpoch, maxSeconds: sessionMax, short: false) {
-            t += r.resetting ? " Session resetting." : " Session \(r.text)."
+    /// Record the session-usage trend for one provider; persist only when it actually changes.
+    private func recordHistory(_ p: Provider, _ u: Usage) {
+        let url = (p == .claude) ? historyURL : codexHistoryURL
+        var h = (p == .claude) ? history : codexHistory
+        let beforeCount = h.points.count, beforeWindow = h.windowEpoch
+        h = updatedHistory(h, sessionEpoch: u.sessionEpoch, pct: u.sessionPct,
+                           now: Date().timeIntervalSince1970,
+                           windowSeconds: sessionWindowSeconds(u))
+        if p == .claude { history = h } else { codexHistory = h }
+        if h.points.count != beforeCount || h.windowEpoch != beforeWindow {
+            if let d = try? JSONEncoder().encode(h) { try? d.write(to: url) }
         }
-        if isStale(checkedAt: u.checkedAt) { t += " Data may be stale." }
-        return t
     }
 
-    // Renders the menu bar from lastGood. Used by refresh() and the spinner tick.
+    /// Spoken status for VoiceOver: every provider on screen, then any freshness warning.
+    private func accessibilityText() -> String {
+        let shown = shownProviders()
+        guard !shown.isEmpty else { return "Claude usage. No data; the collector may not be running." }
+        var parts: [String] = []
+        for (p, u) in shown {
+            if isLoggedOut(u) {
+                parts.append("\(p.title) signed out. Usage tracking is paused; sign in from this menu.")
+                continue
+            }
+            let sp = u.sessionPct.map(String.init) ?? "unknown"
+            let wp = u.weeklyPct.map(String.init) ?? "unknown"
+            var t = "\(p.title) session \(sp) percent. Weekly \(wp) percent."
+            if let r = remainingTime(epoch: u.sessionEpoch, maxSeconds: sessionMaxSeconds(u), short: false) {
+                t += r.resetting ? " Session resetting." : " Session \(r.text)."
+            }
+            if isStale(checkedAt: u.checkedAt) { t += " Data may be stale." }
+            parts.append(t)
+        }
+        return (["Usage."] + parts).joined(separator: " ")
+    }
+
+    // Renders the menu bar from the cached readings. Used by refresh() and the spinner tick.
+    // The status item has one image slot, so the drawn hourglass stands for a single
+    // provider's session; with both on the bar `menuBarRender` asks for no image and the
+    // remaining time is a plain ⏳ glyph instead.
     private func updateStatusItem() {
         guard let button = statusItem.button else { return }
         if flipTimer != nil { return }  // a refresh flip owns the icon until it finishes
-        guard let u = lastGood else { button.image = nil; setTitle("Claude --", color: .systemRed); return }
-        let s = u.sessionPct.map(String.init) ?? "?"
-        let w = u.weeklyPct.map(String.init) ?? "?"
-        // Signed out: the numbers are unknowable until the user signs in, so make the menu bar
-        // itself the call to action instead of showing figures we can no longer refresh.
-        if isLoggedOut(u) {
+        let render = currentRender()
+        switch render.icon {
+        case .none:
             button.image = nil
-            setSegments([("⚠ Sign in", .systemRed)])
-            return
-        }
-        // Otherwise untrusted (collector stopped or failing): dim and mark, don't imply the
-        // old numbers are live.
-        if isDataUntrusted(u) {
-            button.image = nil
-            let body = compactEnabled ? "⚠ s\(s)%" : "⚠ s\(s)% · w\(w)%"
-            setSegments([(body, .secondaryLabelColor)])
-            return
-        }
-        // Each item is colored by its own state (session %, weekly %, time-left).
-        var segs: [(String, NSColor?)] = [("s\(s)%", nsColor(level(forPct: u.sessionPct)))]
-        if !compactEnabled {
-            segs.append((" · ", nil))
-            segs.append(("w\(w)%", nsColor(level(forPct: u.weeklyPct))))
-        }
-        let r = remainingTime(epoch: u.sessionEpoch, maxSeconds: sessionMax, short: true)
-        if let r = r, r.resetting {
-            if animationsEnabled {
-                button.imagePosition = .imageTrailing   // the spinner timer drives the rotating icon
-                segs.append((" · resetting", nil))
-            } else {
-                button.image = nil
-                segs.append((" · ↻ resetting", nil))
-            }
-        } else if let r = r, animationsEnabled, let epoch = u.sessionEpoch {
-            let diff = Int(epoch - Date().timeIntervalSince1970)
-            button.image = hourglassImage(remaining: diff, windowHours: 5)  // sand = session time left
+        case .hourglass(let remaining, let windowHours):
+            button.image = hourglassImage(remaining: remaining, windowHours: windowHours)
             button.imagePosition = .imageTrailing
             button.imageHugsTitle = true
-            segs.append((" · ", nil))
-            segs.append((r.text, nsColor(timeLevel(epoch: u.sessionEpoch))))
-        } else if let r = r {
-            button.image = nil
-            segs.append((" · ⏳", nil))
-            segs.append((r.text, nsColor(timeLevel(epoch: u.sessionEpoch))))
-        } else {
-            button.image = nil
+        case .spinner:
+            button.imagePosition = .imageTrailing   // the spinner timer drives the rotating icon
         }
-        setSegments(segs)
+        setSegments(render.segments)
     }
 
     // Spinner: smoothly rotate the hourglass icon while resetting (fixed-size square canvas,
@@ -298,12 +315,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // Manual-refresh flourish: flip the hourglass one full turn, then settle back upright.
     // Only when animations are on and the hourglass icon is showing (not during a reset).
     private func flipRefreshIcon() {
+        // Only when the hourglass is the current icon: signed out, not updating, mid-reset, or
+        // a two-provider bar all render without it, and there'd be nothing to flip.
         guard animationsEnabled, statusItem.button != nil,
-              let u = lastGood, let epoch = u.sessionEpoch,
-              !isDataUntrusted(u),   // no hourglass is showing when signed out / not updating
-              !(remainingTime(epoch: u.sessionEpoch, maxSeconds: sessionMax, short: true)?.resetting ?? false)
+              case .hourglass(let diff, let windowHours) = currentRender().icon
         else { return }
-        let diff = Int(epoch - Date().timeIntervalSince1970)
         flipTimer?.invalidate()
         flipFrame = 0
         let t = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { [weak self] _ in
@@ -315,7 +331,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 return
             }
             let sy = cos(2 * CGFloat.pi * CGFloat(self.flipFrame) / CGFloat(self.flipFrames))
-            btn.image = hourglassImage(remaining: diff, windowHours: 5, scaleY: sy)
+            btn.image = hourglassImage(remaining: diff, windowHours: windowHours, scaleY: sy)
             btn.imagePosition = .imageTrailing
         }
         RunLoop.main.add(t, forMode: .common)
@@ -336,19 +352,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func requestNotificationAuth() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
-    private func checkAlerts(_ u: Usage) {
-        evalAlert(name: "Session", pct: u.sessionPct, alerted: &sessionAlerted)
-        evalAlert(name: "Weekly",  pct: u.weeklyPct,  alerted: &weeklyAlerted)
+    private func checkAlerts(_ provider: Provider, _ u: Usage) {
+        evalAlert(provider, metric: "Session", pct: u.sessionPct)
+        evalAlert(provider, metric: "Weekly",  pct: u.weeklyPct)
     }
-    private func evalAlert(name: String, pct: Int?, alerted: inout Bool) {
+    private func evalAlert(_ provider: Provider, metric: String, pct: Int?) {
         guard let p = pct else { return }
+        let key = "\(provider.rawValue).\(metric)"
         if p >= alertThreshold {
-            if !alerted {
-                postNotification(title: "Claude usage", body: "\(name) usage at \(p)% (alert at \(alertThreshold)%)")
-                alerted = true
+            if !alerted.contains(key) {
+                postNotification(title: "\(provider.title) usage",
+                                 body: "\(metric) usage at \(p)% (alert at \(alertThreshold)%)")
+                alerted.insert(key)
             }
         } else {
-            alerted = false   // re-arm once it drops back below the threshold (e.g. after reset)
+            alerted.remove(key)   // re-arm once it drops back below the threshold (e.g. after reset)
         }
     }
     private func postNotification(title: String, body: String) {
@@ -392,25 +410,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         runLaunchctl([on ? "enable" : "disable", "gui/\(getuid())/\(agentLabel)"])
     }
 
-    private func setTitle(_ text: String, color: NSColor?) {
-        setSegments([(text, color)])
-    }
-
-    // Build the menu bar title from colored segments (nil color = default/adaptive).
-    private func setSegments(_ segments: [(String, NSColor?)]) {
+    // Build the menu bar title from the rendered segments. A segment carrying an hourglass is
+    // drawn as an inline image instead of its text: the status item has one image slot, so
+    // embedding the icon in the title is the only way two providers can each show one.
+    private func setSegments(_ segments: [Seg]) {
         guard let button = statusItem.button else { return }
         let font = NSFont.menuBarFont(ofSize: 0)
         let result = NSMutableAttributedString()
-        for (text, color) in segments {
+        for seg in segments {
+            if let hg = seg.hourglass {
+                // Nothing tints an inline image, so pick the colour here: white while the menu
+                // highlight is up, the normal label colour otherwise. Deliberately neutral —
+                // the time text next to it carries the warn/critical colour, exactly as the
+                // image-slot hourglass did.
+                let ink: NSColor = menuOpen ? .selectedMenuItemTextColor : .labelColor
+                let img = hourglassImage(remaining: hg.remaining, windowHours: hg.windowHours, tint: ink)
+                let att = NSTextAttachment()
+                att.image = img
+                // Centre the glyph on the cap-height box so it sits like a character.
+                att.bounds = NSRect(x: 0, y: (font.capHeight - img.size.height) / 2,
+                                    width: img.size.width, height: img.size.height)
+                result.append(NSAttributedString(string: " "))   // keep the space the ⏳ text had
+                result.append(NSAttributedString(attachment: att))
+                continue
+            }
             var attrs: [NSAttributedString.Key: Any] = [.font: font]
             // While the menu is open, let the system color the (highlighted) text.
-            if let c = color, !menuOpen { attrs[.foregroundColor] = c }
-            result.append(NSAttributedString(string: text, attributes: attrs))
+            if let c = nsColor(seg.level), !menuOpen { attrs[.foregroundColor] = c }
+            result.append(NSAttributedString(string: seg.text, attributes: attrs))
         }
         button.attributedTitle = result
     }
 
-    private func rebuildMenu(_ u: Usage?) {
+    private func rebuildMenu() {
         guard let menu = statusItem.menu else { return }
         menu.removeAllItems()
         func info(_ title: String) {
@@ -418,50 +450,101 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             it.isEnabled = false
             menu.addItem(it)
         }
-        // Session usage trend chart (this window), once we have a couple of samples. Hidden
-        // while signed out: recording has stopped, so it's a frozen chart of a past window.
-        if history.points.count >= 2, !(u.map(isLoggedOut) ?? false) {
-            info("Session trend (this window)")
-            let reset = history.windowEpoch ?? 0                       // session end (reset time)
-            let chartItem = NSMenuItem()
-            chartItem.view = SparkChartView(points: history.points,
-                                            windowStart: reset - 5 * 3600, windowEnd: reset,
-                                            frame: NSRect(x: 0, y: 0, width: 240, height: 82),
-                                            onClick: { [weak self] in self?.showLargeChart() })
-            menu.addItem(chartItem)
-            add(menu, "Enlarge graph", #selector(showLargeChart), key: "")
-            menu.addItem(.separator())
+        // A provider name above its own readings — only worth the row when there are two
+        // providers to tell apart.
+        func header(_ title: String) {
+            let it = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            it.isEnabled = false
+            it.attributedTitle = NSAttributedString(string: title, attributes: [
+                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+                .foregroundColor: NSColor.secondaryLabelColor])
+            menu.addItem(it)
         }
-        if let u = u, isLoggedOut(u) {
-            // Signed out: lead with the fix. Showing live-looking figures here would be a lie —
-            // report the last measured ones as history instead.
-            info("⚠️ Claude Code is signed out — usage tracking is paused")
-            add(menu, "Sign in to Claude…", #selector(signIn), key: "")
-            menu.addItem(.separator())
-            let s = u.sessionPct.map { "\($0)%" } ?? "?"
-            let w = u.weeklyPct.map { "\($0)%" } ?? "?"
-            info("Last measured: session \(s) · weekly \(w)")
-            info("Measured at: \(u.collectedAt ?? "?")")
-        } else if let u = u {
-            if let err = u.error { info("⚠️ Last update failed: \(err) (showing last good values)") }
-            let s = u.sessionPct.map(String.init) ?? "?"
-            let sRem = remainingTime(epoch: u.sessionEpoch, maxSeconds: sessionMax, short: false)?.text ?? "resets \(u.sessionReset ?? "?")"
-            info("Session: \(s)% used · \(sRem)")
-            let w = u.weeklyPct.map(String.init) ?? "?"
-            let wRem = remainingTime(epoch: u.weeklyEpoch, maxSeconds: weeklyMax, short: false)?.text ?? "resets \(u.weeklyReset ?? "?")"
-            info("Weekly (all models): \(w)% used · \(wRem)")
-            if let ml = u.modelLabel, let mp = u.modelPct { info("Weekly (\(ml)): \(mp)%") }
-            menu.addItem(.separator())
-            info("Updated: \(u.collectedAt ?? "?")")
+        let codex = codexUsage()
+        let dual = codex != nil
+
+        addCharts(to: menu)
+
+        if let u = lastGood {
+            if dual { header("CLAUDE") }
+            if isLoggedOut(u) {
+                // Signed out: lead with the fix. Showing live-looking figures here would be a
+                // lie — report the last measured ones as history instead.
+                info("⚠️ Claude Code is signed out — usage tracking is paused")
+                add(menu, "Sign in to Claude…", #selector(signIn), key: "")
+                menu.addItem(.separator())
+                let s = u.sessionPct.map { "\($0)%" } ?? "?"
+                let w = u.weeklyPct.map { "\($0)%" } ?? "?"
+                info("Last measured: session \(s) · weekly \(w)")
+                info("Measured at: \(u.collectedAt ?? "?")")
+            } else {
+                if let err = u.error { info("⚠️ Last update failed: \(err) (showing last good values)") }
+                for line in detailLines(.claude, u) { info(line) }
+            }
         } else {
             info("No data (daemon not running?)")
         }
+        if let x = codex {
+            header("CODEX")
+            if let err = x.error { info("⚠️ Last update failed: \(err) (showing last good values)") }
+            for line in detailLines(.codex, x) { info(line) }
+        }
+        menu.addItem(.separator())
+        if dual {
+            info("Updated: Claude \(lastGood?.collectedAt ?? "?") · Codex \(codex?.collectedAt ?? "?")")
+        } else if let u = lastGood, !isLoggedOut(u) {
+            info("Updated: \(u.collectedAt ?? "?")")
+        }
         add(menu, "Refresh now", #selector(refreshNow), key: "r")
         add(menu, "Copy status", #selector(copyStatus), key: "")
-        add(menu, "Open usage page", #selector(openUsage), key: "")
+        if dual {
+            let pages = NSMenuItem(title: "Open usage page", action: nil, keyEquivalent: "")
+            let sub = NSMenu()
+            for (title, sel) in [("Claude", #selector(openUsage)), ("Codex", #selector(openCodexUsage))] {
+                let it = NSMenuItem(title: title, action: sel, keyEquivalent: "")
+                it.target = self
+                sub.addItem(it)
+            }
+            pages.submenu = sub
+            menu.addItem(pages)
+        } else {
+            add(menu, "Open usage page", #selector(openUsage), key: "")
+        }
         menu.addItem(.separator())
         addCheck(menu, "Animations", #selector(toggleAnimations), on: animationsEnabled)
         addCheck(menu, "Compact (session only)", #selector(toggleCompact), on: compactEnabled)
+        // Which providers reach the menu bar. Pointless with only one, so it appears only
+        // once Codex is readable.
+        if dual {
+            let barItem = NSMenuItem(title: "Menu bar", action: nil, keyEquivalent: "")
+            let sub = NSMenu()
+            for m in BarMode.allCases {
+                let it = NSMenuItem(title: m.title, action: #selector(setBarModeOption(_:)), keyEquivalent: "")
+                it.target = self
+                it.representedObject = m.rawValue
+                it.state = (barMode == m) ? .on : .off
+                sub.addItem(it)
+            }
+            barItem.submenu = sub
+            menu.addItem(barItem)
+        }
+        // How the trend chart is drawn. The two-provider layouts are offered only when there
+        // is a second provider to draw.
+        let chartItem = NSMenuItem(title: "Trend chart", action: nil, keyEquivalent: "")
+        let chartSub = NSMenu()
+        // With one provider the two-provider layouts all reduce to the same picture, so only
+        // "Claude only" and "Off" are listed — and any non-off mode reads as "Claude only".
+        let checked: ChartMode = dual ? chartMode : (chartMode == .off ? .off : .claudeOnly)
+        for m in ChartMode.allCases {
+            if !dual, m == .stacked || m == .overlay || m == .codexOnly { continue }
+            let it = NSMenuItem(title: m.title, action: #selector(setChartModeOption(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = m.rawValue
+            it.state = (checked == m) ? .on : .off
+            chartSub.addItem(it)
+        }
+        chartItem.submenu = chartSub
+        menu.addItem(chartItem)
         // Usage alerts: Off / 70% / 80% / 90%
         let alertsItem = NSMenuItem(title: "Usage alerts", action: nil, keyEquivalent: "")
         let sub = NSMenu()
@@ -481,6 +564,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         add(menu, "Check for Updates…", #selector(checkForUpdates), key: "")
         add(menu, "About (v\(appVersion))", #selector(openAbout), key: "")
         add(menu, "Quit", #selector(quit), key: "q")
+    }
+
+    /// One provider's chart series, or nil until there are enough samples to draw a line.
+    /// The window is taken from the reading (Codex reports its own length) so the x-axis spans
+    /// exactly the session it belongs to.
+    private func seriesFor(_ p: Provider) -> ChartSeries? {
+        let h = (p == .claude) ? history : codexHistory
+        guard h.points.count >= 2 else { return nil }
+        let u = (p == .claude) ? lastGood : codexLastGood
+        let end = h.windowEpoch ?? 0                        // session end (reset time)
+        return ChartSeries(points: h.points,
+                           windowStart: end - sessionWindowSeconds(u), windowEnd: end,
+                           color: p == .claude ? .controlAccentColor : codexColor,
+                           label: p.title)
+    }
+
+    /// Providers to chart right now: the mode's choice, minus a signed-out Claude (recording
+    /// has stopped, so its chart would be a frozen picture of a past window) and minus
+    /// anything without enough samples yet.
+    private func chartable() -> [(Provider, ChartSeries)] {
+        var provs = chartProviders(chartMode, codexAvailable: codexUsage() != nil)
+        if lastGood.map(isLoggedOut) ?? false { provs.removeAll { $0 == .claude } }
+        return provs.compactMap { p in seriesFor(p).map { (p, $0) } }
+    }
+
+    // Session usage trend chart(s) for this window, at the top of the dropdown.
+    private func addCharts(to menu: NSMenu) {
+        let items = chartable()
+        guard !items.isEmpty else { return }
+        let header = NSMenuItem(title: "Session trend (this window)", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+        let click: () -> Void = { [weak self] in self?.showLargeChart() }
+        if chartMode == .overlay && items.count > 1 {
+            let it = NSMenuItem()
+            it.view = SparkChartView(series: items.map { $0.1 },
+                                     frame: NSRect(x: 0, y: 0, width: 240, height: 96), onClick: click)
+            menu.addItem(it)
+        } else {
+            // Stacked: one chart per provider, each labeled inside its own plot. A lone chart
+            // needs no label at all.
+            for (p, series) in items {
+                let it = NSMenuItem()
+                it.view = SparkChartView(series: [series], title: items.count > 1 ? p.title : nil,
+                                         frame: NSRect(x: 0, y: 0, width: 240, height: items.count > 1 ? 96 : 82),
+                                         onClick: click)
+                menu.addItem(it)
+            }
+        }
+        add(menu, "Enlarge graph", #selector(showLargeChart), key: "")
+        menu.addItem(.separator())
     }
 
     private func add(_ menu: NSMenu, _ title: String, _ sel: Selector, key: String) {
@@ -503,12 +637,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         flipRefreshIcon()  // immediate visual feedback
         runCollect()
     }
-    // Kick a background collection; refresh the display when it finishes.
+    // Kick a background collection for every installed collector; refresh the display as each
+    // finishes. The Codex collector is absent on an installation that predates it, and exits
+    // immediately when the Codex CLI isn't installed, so it's safe to fire unconditionally.
     private func runCollect() {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: collectPath)
-        p.terminationHandler = { [weak self] _ in DispatchQueue.main.async { self?.refresh() } }
-        try? p.run()
+        for path in [collectPath, codexCollectPath] where FileManager.default.isExecutableFile(atPath: path) {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: path)
+            p.terminationHandler = { [weak self] _ in DispatchQueue.main.async { self?.refresh() } }
+            try? p.run()
+        }
     }
     @objc private func systemDidWake() {
         refresh()                 // show the cached values immediately
@@ -517,7 +655,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in self?.runCollect() }
     }
     @objc private func openUsage() {
-        if let url = URL(string: "https://claude.ai/settings/usage") { NSWorkspace.shared.open(url) }
+        if let url = URL(string: claudeUsageURL) { NSWorkspace.shared.open(url) }
+    }
+    @objc private func openCodexUsage() {
+        if let url = URL(string: codexUsageURL) { NSWorkspace.shared.open(url) }
     }
     // Signing in is interactive, so hand it to Terminal. Generating a .command file and
     // launching it with `open` needs no AppleEvents permission (same approach as
@@ -557,17 +698,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                           "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
         return candidates.first { fm.isExecutableFile(atPath: $0) } ?? "claude"
     }
+    // Copies exactly what the menu bar shows, so a pasted status always matches the screen.
     @objc private func copyStatus() {
-        guard let u = lastGood else { return }
-        let s = u.sessionPct.map(String.init) ?? "?"
-        let w = u.weeklyPct.map(String.init) ?? "?"
-        var str = "s\(s)% · w\(w)%"
-        if let r = remainingTime(epoch: u.sessionEpoch, maxSeconds: sessionMax, short: true) {
-            str += r.resetting ? " · resetting" : " · \(r.text)"
-        }
+        guard lastGood != nil || codexUsage() != nil else { return }
         let pb = NSPasteboard.general
         pb.clearContents()
-        pb.setString(str, forType: .string)
+        pb.setString(barText(currentRender()), forType: .string)
     }
     @objc private func setAlertOption(_ sender: NSMenuItem) {
         if sender.tag == 0 {
@@ -575,29 +711,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             alertsEnabled = true
             alertThreshold = sender.tag
-            sessionAlerted = false; weeklyAlerted = false
+            alerted.removeAll()
             requestNotificationAuth()
         }
         UserDefaults.standard.set(alertsEnabled, forKey: "usageAlerts")
         UserDefaults.standard.set(alertThreshold, forKey: "alertThreshold")
-        rebuildMenu(lastGood)
+        rebuildMenu()
     }
     @objc private func toggleCompact() {
         compactEnabled.toggle()
         UserDefaults.standard.set(compactEnabled, forKey: "compactMode")
         updateStatusItem()
-        rebuildMenu(lastGood)
+        rebuildMenu()
+    }
+    @objc private func setBarModeOption(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let m = BarMode(rawValue: raw) else { return }
+        barMode = m
+        UserDefaults.standard.set(raw, forKey: "barMode")
+        updateStatusItem()
+        rebuildMenu()
+    }
+    @objc private func setChartModeOption(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let m = ChartMode(rawValue: raw) else { return }
+        chartMode = m
+        UserDefaults.standard.set(raw, forKey: "chartMode")
+        rebuildMenu()
     }
     @objc private func openAbout() {
         if let url = URL(string: repoURL) { NSWorkspace.shared.open(url) }
     }
     // Enlarge the trend chart into a reusable floating window.
+    // Enlarge the trend chart into a reusable floating window, following the same mode as the
+    // dropdown: overlaid in one plot, or stacked one plot per provider.
     @objc private func showLargeChart() {
-        guard history.points.count >= 2 else { return }
-        let reset = history.windowEpoch ?? 0
-        let size = NSSize(width: 620, height: 360)
-        let chart = SparkChartView(points: history.points, windowStart: reset - 5 * 3600, windowEnd: reset,
-                                   frame: NSRect(origin: .zero, size: size))
+        let items = chartable()
+        guard !items.isEmpty else { return }
+        let overlay = (chartMode == .overlay) || items.count == 1
+        let each = NSSize(width: 620, height: 360)
+        let size = overlay ? each : NSSize(width: each.width, height: each.height * CGFloat(items.count))
+        let content: NSView
+        if overlay {
+            content = SparkChartView(series: items.map { $0.1 },
+                                     title: items.count > 1 ? nil : items[0].0.title,
+                                     frame: NSRect(origin: .zero, size: size))
+        } else {
+            let stack = NSView(frame: NSRect(origin: .zero, size: size))
+            for (i, item) in items.enumerated() {
+                // Top-down: the first provider takes the top slot.
+                let y = size.height - each.height * CGFloat(i + 1)
+                stack.addSubview(SparkChartView(series: [item.1], title: item.0.title,
+                                                frame: NSRect(x: 0, y: y, width: each.width, height: each.height)))
+            }
+            content = stack
+        }
         let win: NSWindow
         if let w = chartWindow {
             win = w
@@ -606,11 +772,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                            styleMask: [.titled, .closable], backing: .buffered, defer: false)
             win.isReleasedWhenClosed = false
             win.level = .floating
-            win.title = "Claude — Session usage (this window)"
             chartWindow = win
         }
+        win.title = items.map { $0.0.title }.joined(separator: " + ") + " — Session usage (this window)"
         win.setContentSize(size)
-        win.contentView = chart
+        win.contentView = content
         win.center()
         NSApp.activate(ignoringOtherApps: true)
         win.makeKeyAndOrderFront(nil)
@@ -667,14 +833,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleStartAtLogin() {
         startAtLoginEnabled.toggle()
         setStartAtLogin(startAtLoginEnabled)
-        rebuildMenu(lastGood)
+        rebuildMenu()
     }
     @objc private func toggleAnimations() {
         animationsEnabled.toggle()
         UserDefaults.standard.set(animationsEnabled, forKey: "animationsEnabled")
         if !animationsEnabled { stopSpinner() }
         updateStatusItem()
-        rebuildMenu(lastGood)
+        rebuildMenu()
     }
     @objc private func quit() { NSApp.terminate(nil) }
 }

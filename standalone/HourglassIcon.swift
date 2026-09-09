@@ -5,15 +5,19 @@ import AppKit
 //   scaleY — flip about the horizontal axis (1 upright, 0 edge-on, -1 upside down).
 //   angle  — true rotation (for the resetting spinner).
 //   spinning — draw in a square canvas so rotation never clips and the width stays fixed.
+//   tint — draw in this colour instead of as a template image. The status item tints a template
+//     image for us, but an image embedded inline in the title (two providers, one image slot)
+//     is never tinted, so that caller has to supply the colour itself.
 func hourglassImage(remaining: Int, windowHours: Int,
-                    scaleY: CGFloat = 1, angle: CGFloat = 0, spinning: Bool = false) -> NSImage {
+                    scaleY: CGFloat = 1, angle: CGFloat = 0, spinning: Bool = false,
+                    tint: NSColor? = nil) -> NSImage {
     let hoursLeft = max(0, Int(ceil(Double(remaining) / 3600.0)))
     let frac = min(1.0, Double(min(hoursLeft, windowHours)) / Double(max(1, windowHours)))
     let bw: CGFloat = 11, bh: CGFloat = 15, line: CGFloat = 1.1
     let size = spinning ? NSSize(width: 21, height: 21) : NSSize(width: bw, height: bh)
     let img = NSImage(size: size)
     img.lockFocus()
-    defer { img.unlockFocus(); img.isTemplate = true }
+    defer { img.unlockFocus(); img.isTemplate = (tint == nil) }
     guard let ctx = NSGraphicsContext.current?.cgContext else { return img }
     // Transform about the canvas center: rotate, then vertical scale (flip).
     ctx.translateBy(x: size.width / 2, y: size.height / 2)
@@ -23,7 +27,8 @@ func hourglassImage(remaining: Int, windowHours: Int,
     // Hourglass geometry inside its bw×bh box, centered in the (possibly square) canvas.
     let ox = (size.width - bw) / 2, oy = (size.height - bh) / 2, p = line + 0.5
     let cx = ox + bw / 2, cy = oy + bh / 2, topY = oy + bh - p, botY = oy + p, capL = ox + p, capR = ox + bw - p
-    NSColor.black.setStroke(); NSColor.black.setFill()
+    let ink = tint ?? .black
+    ink.setStroke(); ink.setFill()
     let top = NSBezierPath()
     top.move(to: NSPoint(x: capL, y: topY)); top.line(to: NSPoint(x: capR, y: topY)); top.line(to: NSPoint(x: cx, y: cy)); top.close()
     let bot = NSBezierPath()

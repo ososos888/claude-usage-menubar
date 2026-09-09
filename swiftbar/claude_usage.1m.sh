@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # <swiftbar.title>Claude Usage</swiftbar.title>
 # <swiftbar.version>1.0.0</swiftbar.version>
-# <swiftbar.desc>Show Claude subscription usage (session/weekly) in the menu bar</swiftbar.desc>
+# <swiftbar.desc>Show Claude (and Codex) subscription usage (session/weekly) in the menu bar</swiftbar.desc>
 # <swiftbar.hideRunInTerminal>true</swiftbar.hideRunInTerminal>
 # <swiftbar.hideLastUpdated>true</swiftbar.hideLastUpdated>
 #
-# Reads only the cache file (~/.claude-usage/usage.json), so it is light and instant.
-# The data is refreshed by the launchd daemon (collect.sh) every minute.
+# Reads only the cache files (~/.claude-usage/{usage,codex-usage}.json), so it is light and
+# instant. The data is refreshed by the launchd daemons (collect.sh, collect-codex.sh) every
+# minute. The Codex half is skipped entirely when its cache is missing or signed out.
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 F="$HOME/.claude-usage/usage.json"
+XF="$HOME/.claude-usage/codex-usage.json"
 
 if [[ ! -f "$F" ]]; then
   echo "-- %"
@@ -81,17 +83,67 @@ MP=$(jq -r '.weekly_model_pct   // "-"' "$F")
 ERR=$(jq -r '.error // ""' "$F")
 CA=$(jq -r '.collected_at // "?"' "$F")
 
+# Codex (optional). Its collector stores absolute reset epochs, so no date parsing is needed.
+XS=""; XW=""; XSE=""; XWE=""; XPLAN=""; XERR=""; XCA=""
+if [[ -f "$XF" ]]; then
+  XERR=$(jq -r '.error // ""' "$XF")
+  case "$XERR" in
+    logged_out|not_installed) ;;   # nothing to show: stay Claude-only
+    *)
+      XS=$(jq -r '.session_pct // ""' "$XF")
+      XW=$(jq -r '.weekly_all_pct // ""' "$XF")
+      XSE=$(jq -r '.session_reset_epoch // ""' "$XF")
+      XWE=$(jq -r '.weekly_all_reset_epoch // ""' "$XF")
+      XPLAN=$(jq -r '.plan // ""' "$XF")
+      XCA=$(jq -r '.collected_at // "?"' "$XF")
+      ;;
+  esac
+fi
+
+# Epoch -> remaining time. Same output shapes as remaining(), for the epoch-based collector.
+remaining_epoch() {
+  local epoch="$1" style="${2:-long}" now diff d h m
+  [[ "$epoch" =~ ^[0-9]+$ ]] || { echo ""; return; }
+  now="$(date +%s)"; diff=$(( epoch - now ))
+  if (( diff <= 30 || diff > 691200 )); then
+    [[ "$style" == short ]] && echo "resetting" || echo "resetting…"
+    return
+  fi
+  d=$(( diff/86400 )); h=$(( (diff%86400)/3600 )); m=$(( (diff%3600)/60 ))
+  if [[ "$style" == short ]]; then
+    if   (( d > 0 )); then echo "${d}d${h}h"
+    elif (( h > 0 )); then echo "${h}h${m}m"
+    else echo "${m}m"; fi
+  else
+    if   (( d > 0 )); then echo "${d}d ${h}h left"
+    elif (( h > 0 )); then echo "${h}h ${m}m left"
+    else echo "${m}m left"; fi
+  fi
+}
+
 # Compute remaining time until reset
 SREM="$(remaining "$SR" long)"    # session remaining, for the dropdown
 SREMC="$(remaining "$SR" short)"  # session remaining, compact for the menu bar
 WREM="$(remaining "$WR" long)"    # weekly remaining
 
 # Menu bar line (colored by session %). s = session (5-hour rolling), w = weekly
-BAR="s${S}% · w${W}%"
-if [[ "$SREMC" == "resetting" ]]; then
-  BAR="$BAR · ↻ resetting"
-elif [[ -n "$SREMC" ]]; then
-  BAR="$BAR · ⏳${SREMC}"
+if [[ -n "$XS" ]]; then
+  # Both providers: session + time each, tagged C (Claude) and X (Codex). Weekly moves to the
+  # dropdown — four percentages plus two clocks is more width than a menu bar should take.
+  XSREMC="$(remaining_epoch "$XSE" short)"
+  BAR="C ${S}%"
+  if [[ "$SREMC" == "resetting" ]]; then BAR="$BAR ↻"
+  elif [[ -n "$SREMC" ]]; then BAR="$BAR ⏳${SREMC}"; fi
+  BAR="$BAR · X ${XS}%"
+  if [[ "$XSREMC" == "resetting" ]]; then BAR="$BAR ↻"
+  elif [[ -n "$XSREMC" ]]; then BAR="$BAR ⏳${XSREMC}"; fi
+else
+  BAR="s${S}% · w${W}%"
+  if [[ "$SREMC" == "resetting" ]]; then
+    BAR="$BAR · ↻ resetting"
+  elif [[ -n "$SREMC" ]]; then
+    BAR="$BAR · ⏳${SREMC}"
+  fi
 fi
 BARCOLOR="$(color_for "$S")"
 if [[ -n "$BARCOLOR" ]]; then
@@ -101,11 +153,26 @@ else
 fi
 
 echo "---"
+[[ -n "$XS" ]] && echo "CLAUDE"
 [[ -n "$ERR" ]] && echo "⚠️ Last update failed: $ERR (showing last good values) | color=red"
 echo "Session: ${S}% used · ${SREM:-resets $SR} $([[ -n "$SREM" ]] && echo "(resets $SR)") | $(colorpipe "$S")"
 echo "Weekly (all models): ${W}% used · ${WREM:-resets $WR} $([[ -n "$WREM" ]] && echo "(resets $WR)") | $(colorpipe "$W")"
 echo "Weekly (${ML}): ${MP}%"
+if [[ -n "$XS" ]]; then
+  echo "---"
+  echo "CODEX"
+  [[ -n "$XERR" ]] && echo "⚠️ Last update failed: $XERR (showing last good values) | color=red"
+  XSREM="$(remaining_epoch "$XSE" long)"; XWREM="$(remaining_epoch "$XWE" long)"
+  echo "Session: ${XS}% used · ${XSREM:-reset time unknown} | $(colorpipe "$XS")"
+  echo "Weekly: ${XW:-?}% used · ${XWREM:-reset time unknown} | $(colorpipe "$XW")"
+  [[ -n "$XPLAN" ]] && echo "Plan: ${XPLAN}"
+fi
 echo "---"
-echo "Updated: ${CA}"
+if [[ -n "$XS" ]]; then
+  echo "Updated: Claude ${CA} · Codex ${XCA}"
+else
+  echo "Updated: ${CA}"
+fi
 echo "Refresh now | bash='$HOME/.claude-usage/collect.sh' terminal=false refresh=true"
 echo "Open Claude usage page | href=https://claude.ai/settings/usage"
+[[ -n "$XS" ]] && echo "Open Codex usage page | href=https://chatgpt.com/codex/settings/usage"
