@@ -15,13 +15,17 @@ let sessionMax = 6 * 3600, weeklyMax = 8 * 86400
 // MARK: remainingTime
 check(remainingTime(epoch: nil, maxSeconds: sessionMax, short: true, now: now) == nil, "remaining: nil epoch → nil")
 check(remainingTime(epoch: now.timeIntervalSince1970 + H, maxSeconds: sessionMax, short: true, now: now)
-        == Remain(text: "1h0m", resetting: false), "remaining: 1h short")
+        == Remain(text: "1:00", resetting: false), "remaining: 1h short")
 check(remainingTime(epoch: now.timeIntervalSince1970 + H, maxSeconds: sessionMax, short: false, now: now)
         == Remain(text: "1h 0m left", resetting: false), "remaining: 1h long")
 check(remainingTime(epoch: now.timeIntervalSince1970 + 3 * D + 2 * H, maxSeconds: weeklyMax, short: true, now: now)
-        == Remain(text: "3d2h", resetting: false), "remaining: 3d2h short")
+        == Remain(text: "3d2h", resetting: false), "remaining: 3d2h short (days keep their unit)")
 check(remainingTime(epoch: now.timeIntervalSince1970 + 300, maxSeconds: sessionMax, short: false, now: now)
         == Remain(text: "5m left", resetting: false), "remaining: 5m long")
+check(remainingTime(epoch: now.timeIntervalSince1970 + 300, maxSeconds: sessionMax, short: true, now: now)
+        == Remain(text: "0:05", resetting: false), "remaining: under an hour still reads as a clock")
+check(remainingTime(epoch: now.timeIntervalSince1970 + 4 * H + 8 * 60, maxSeconds: sessionMax, short: true, now: now)
+        == Remain(text: "4:08", resetting: false), "remaining: minutes are zero-padded")
 check(remainingTime(epoch: now.timeIntervalSince1970 + 20, maxSeconds: sessionMax, short: true, now: now)?.resetting == true,
       "remaining: <=30s → resetting")
 check(remainingTime(epoch: now.timeIntervalSince1970 - 100, maxSeconds: sessionMax, short: true, now: now)?.resetting == true,
@@ -248,9 +252,9 @@ func bar(_ c: Usage?, _ x: Usage? = nil, mode: BarMode = .both, compact: Bool = 
 let in4h = now.timeIntervalSince1970 + 4 * H
 
 check(bar(nil) == "Claude --", "bar: no data at all")
-check(bar(claudeU(epoch: in4h)) == "s14% · w25% · ⏳4h0m", "bar: single provider keeps the old format")
-check(bar(claudeU(epoch: in4h), compact: true) == "s14% · ⏳4h0m", "bar: compact drops weekly")
-check(bar(claudeU(epoch: in4h), animations: true) == "s14% · w25% · 4h0m",
+check(bar(claudeU(epoch: in4h)) == "s14% · w25% · ⏳4:00", "bar: single provider keeps the old format")
+check(bar(claudeU(epoch: in4h), compact: true) == "s14% · ⏳4:00", "bar: compact drops weekly")
+check(bar(claudeU(epoch: in4h), animations: true) == "s14% · w25% · 4:00",
       "bar: animated single provider drops the ⏳ glyph (the drawn hourglass replaces it)")
 check(menuBarRender(claude: claudeU(epoch: in4h), codex: nil, mode: .both, compact: false,
                     animations: true, now: now).icon == .hourglass(4 * 3600, 5),
@@ -266,7 +270,7 @@ check(menuBarRender(claude: claudeU(epoch: now.timeIntervalSince1970 - 10), code
 
 // MARK: menuBarRender — two providers
 let cx = codex(83, collectedAt: live, checkedAt: live, epoch: now.timeIntervalSince1970 + 2 * H)
-check(bar(claudeU(epoch: in4h), cx) == "C 14% ⏳4h0m · X 83% ⏳2h0m", "bar: both providers")
+check(bar(claudeU(epoch: in4h), cx) == "C 14% ⏳4:00 · X 83% ⏳2:00", "bar: both providers")
 check(bar(claudeU(epoch: in4h), cx, compact: true) == "C 14% · X 83%", "bar: both, compact")
 check(menuBarRender(claude: claudeU(epoch: in4h), codex: cx, mode: .both, compact: false,
                     animations: true, now: now).icon == BarIcon.none,
@@ -288,18 +292,27 @@ check(hourglasses(claudeU(epoch: now.timeIntervalSince1970 - 10), cx, animations
       "bar: a resetting provider shows ↻ instead of an hourglass")
 check(hourglasses(claudeU(epoch: in4h), cx, animations: true).map { $0.windowHours } == [5, 5],
       "bar: window hours come from each provider's own window")
-check(bar(claudeU(epoch: in4h), cx, mode: .claudeOnly) == "s14% · w25% · ⏳4h0m",
+// The C / X tags carry the provider's brand colour; nothing else on the bar does, so a
+// percentage keeps its own warn/critical colour.
+let dualSegs = menuBarRender(claude: claudeU(epoch: in4h), codex: cx, mode: .both,
+                             compact: false, animations: true, now: now).segments
+check(dualSegs.compactMap { $0.brand } == [.claude, .codex], "bar: exactly the two tags are branded")
+check(dualSegs.filter { $0.brand != nil }.map { $0.text } == ["C ", "X "], "bar: the branded runs are the tags")
+check(menuBarRender(claude: claudeU(epoch: in4h), codex: nil, mode: .both, compact: false,
+                    animations: true, now: now).segments.allSatisfy { $0.brand == nil },
+      "bar: a single-provider bar has no tags to brand")
+check(bar(claudeU(epoch: in4h), cx, mode: .claudeOnly) == "s14% · w25% · ⏳4:00",
       "bar: claude only ignores an available Codex")
-check(bar(claudeU(epoch: in4h), cx, mode: .codexOnly) == "s83% · w33% · ⏳2h0m",
+check(bar(claudeU(epoch: in4h), cx, mode: .codexOnly) == "s83% · w33% · ⏳2:00",
       "bar: codex only shows Codex in the single-provider format")
-check(bar(claudeU(epoch: in4h), codex(error: "logged_out"), mode: .codexOnly) == "s14% · w25% · ⏳4h0m",
+check(bar(claudeU(epoch: in4h), codex(error: "logged_out"), mode: .codexOnly) == "s14% · w25% · ⏳4:00",
       "bar: codex only with no Codex falls back to Claude, never blank")
-check(bar(claudeU(error: "logged_out"), cx) == "C ⚠ · X 83% ⏳2h0m",
+check(bar(claudeU(error: "logged_out"), cx) == "C ⚠ · X 83% ⏳2:00",
       "bar: a signed-out Claude shrinks to a warning, Codex keeps reporting")
-check(bar(claudeU(epoch: in4h, collectedAt: oldISO), cx) == "C ⚠14% · X 83% ⏳2h0m",
+check(bar(claudeU(epoch: in4h, collectedAt: oldISO), cx) == "C ⚠14% · X 83% ⏳2:00",
       "bar: a stalled provider is marked without hiding the other")
-check(bar(nil, cx) == "C -- · X 83% ⏳2h0m", "bar: missing Claude cache with Codex present")
-check(bar(claudeU(epoch: now.timeIntervalSince1970 - 10), cx) == "C 14% ↻ · X 83% ⏳2h0m",
+check(bar(nil, cx) == "C -- · X 83% ⏳2:00", "bar: missing Claude cache with Codex present")
+check(bar(claudeU(epoch: now.timeIntervalSince1970 - 10), cx) == "C 14% ↻ · X 83% ⏳2:00",
       "bar: resetting provider marked inline (no spinner with two providers)")
 
 // MARK: detailLines

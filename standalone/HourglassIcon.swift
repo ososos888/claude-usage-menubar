@@ -8,12 +8,14 @@ import AppKit
 //   tint — draw in this colour instead of as a template image. The status item tints a template
 //     image for us, but an image embedded inline in the title (two providers, one image slot)
 //     is never tinted, so that caller has to supply the colour itself.
+//   size — overall scale. Inline in the title the icon sits next to text rather than owning the
+//     image slot, so it is drawn smaller there.
 func hourglassImage(remaining: Int, windowHours: Int,
                     scaleY: CGFloat = 1, angle: CGFloat = 0, spinning: Bool = false,
-                    tint: NSColor? = nil) -> NSImage {
+                    tint: NSColor? = nil, size scale: CGFloat = 1) -> NSImage {
     let hoursLeft = max(0, Int(ceil(Double(remaining) / 3600.0)))
     let frac = min(1.0, Double(min(hoursLeft, windowHours)) / Double(max(1, windowHours)))
-    let bw: CGFloat = 11, bh: CGFloat = 15, line: CGFloat = 1.1
+    let bw: CGFloat = 11 * scale, bh: CGFloat = 15 * scale, line: CGFloat = 1.1 * scale
     let size = spinning ? NSSize(width: 21, height: 21) : NSSize(width: bw, height: bh)
     let img = NSImage(size: size)
     img.lockFocus()

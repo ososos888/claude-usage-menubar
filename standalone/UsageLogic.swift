@@ -93,7 +93,10 @@ func remainingTime(epoch: Double?, maxSeconds: Int, short: Bool, now: Date = Dat
     let d = diff / 86400, h = (diff % 86400) / 3600, m = (diff % 3600) / 60
     let text: String
     if short {
-        if d > 0 { text = "\(d)d\(h)h" } else if h > 0 { text = "\(h)h\(m)m" } else { text = "\(m)m" }
+        // Clock form (`4:53`) rather than `4h53m`: the menu bar pays for every character, and
+        // two providers side by side made the old form wide enough to get the item clipped.
+        // Days only ever show for a weekly window, which never reaches the bar.
+        if d > 0 { text = "\(d)d\(h)h" } else { text = String(format: "%d:%02d", h, m) }
     } else {
         if d > 0 { text = "\(d)d \(h)h left" } else if h > 0 { text = "\(h)h \(m)m left" } else { text = "\(m)m left" }
     }
@@ -283,12 +286,15 @@ struct HourglassSpec: Equatable { let remaining: Int; let windowHours: Int }
 
 /// One colored run of menu bar text. When `hourglass` is set the view draws that icon instead
 /// of the text, and `text` is the plain-text stand-in used for "Copy status" and VoiceOver.
+/// When `brand` is set the run is painted in that provider's colour instead of `level`'s —
+/// used for the `C` / `X` tags, so each provider's figures are identifiable at a glance.
 struct Seg: Equatable {
     let text: String
     let level: UsageLevel
     var hourglass: HourglassSpec?
-    init(text: String, level: UsageLevel, hourglass: HourglassSpec? = nil) {
-        self.text = text; self.level = level; self.hourglass = hourglass
+    var brand: Provider?
+    init(text: String, level: UsageLevel, hourglass: HourglassSpec? = nil, brand: Provider? = nil) {
+        self.text = text; self.level = level; self.hourglass = hourglass; self.brand = brand
     }
 }
 
@@ -344,7 +350,7 @@ private func singleBar(_ u: Usage?, compact: Bool, animations: Bool, now: Date) 
 /// four percentages plus two clocks is more width than a menu bar should take, so weekly
 /// lives in the dropdown and the tooltip.
 private func dualPart(_ p: Provider, _ u: Usage?, compact: Bool, animations: Bool, now: Date) -> [Seg] {
-    let tag = Seg(text: "\(p.tag) ", level: .dim)
+    let tag = Seg(text: "\(p.tag) ", level: .dim, brand: p)
     guard let u = u else { return [tag, Seg(text: "--", level: .critical)] }
     if isLoggedOut(u) { return [tag, Seg(text: "⚠", level: .critical)] }
     let pct = u.sessionPct.map { "\($0)%" } ?? "?%"

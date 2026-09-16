@@ -4,6 +4,32 @@ All notable changes to this project are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and the format of
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.8.1] - 2026-09-16
+
+### Fixed
+- **The Codex half could be clipped straight out of the menu bar.** With both providers the
+  bar was wide enough that macOS dropped the overflowing part on a busy menu bar, so Codex
+  simply wasn't there — while every other signal (collector, cache, trend recording) said it
+  was working. The bar is now ~18% narrower (193 → 159 pt at the default menu bar font), from
+  the clock-form time and the smaller inline hourglass below.
+
+### Added
+- **Provider colors: Claude orange, Codex blue.** They mark the `C` / `X` tags on the menu bar
+  and the trend lines and legend in the dropdown, so the same hue always means the same
+  product and two sets of figures are never confusable. Each is a light/dark pair, since both
+  the menu bar and the menu follow the system appearance. Percentages keep their own
+  warn/critical colors — only the tags are branded. The chart no longer borrows the system
+  accent color, which could land on the same hue as the other provider.
+
+### Changed
+- **The menu bar time is now a clock: `4:53` instead of `4h53m`.** Two providers side by side
+  made the old form wide enough that macOS clipped the status item, hiding the Codex half
+  outright on a busy menu bar. Combined with a smaller inline hourglass, the two-provider bar
+  is ~18% narrower (193 → 159 pt at the default menu bar font). Dropdown and tooltip keep the
+  spelled-out `4h 53m left`, where there is room and it reads better.
+- The inline hourglass (two-provider bar only) is drawn at 78% size, so it sits next to text
+  rather than towering over it. The single-provider image-slot hourglass is unchanged.
+
 ## [1.8.0] - 2026-09-09
 
 ### Added

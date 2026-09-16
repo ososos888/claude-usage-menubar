@@ -21,9 +21,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var codexHistory = SessionHistory(windowEpoch: nil, points: [])  // Codex session trend
     private var lastGood: Usage?                 // keep last successful read to avoid flicker
     private var codexLastGood: Usage?
-    // Claude's line keeps the system accent colour; Codex needs a hue that stays legible
-    // against every accent choice when the two lines share one chart.
-    private let codexColor = NSColor.systemTeal
+    // Brand colours: Claude orange, Codex blue. They identify a provider wherever both appear
+    // together — the C / X tags on the bar and the trend lines in the dropdown — so the same
+    // hue always means the same product. Each has a darker shade for light backgrounds and a
+    // lighter one for dark, since the menu bar and the menu follow the system appearance.
+    private static let claudeInk = dynamicInk(light: NSColor(srgbRed: 0.78, green: 0.38, blue: 0.16, alpha: 1),
+                                              dark:  NSColor(srgbRed: 1.00, green: 0.62, blue: 0.40, alpha: 1))
+    private static let codexInk  = dynamicInk(light: NSColor(srgbRed: 0.13, green: 0.39, blue: 0.92, alpha: 1),
+                                              dark:  NSColor(srgbRed: 0.44, green: 0.66, blue: 1.00, alpha: 1))
+    private static func dynamicInk(light: NSColor, dark: NSColor) -> NSColor {
+        NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light }
+    }
+    private func providerColor(_ p: Provider) -> NSColor {
+        p == .claude ? AppDelegate.claudeInk : AppDelegate.codexInk
+    }
+    // The inline hourglass shares the line with text instead of owning the image slot, so it
+    // is drawn smaller — two providers plus two icons is a lot of menu bar width.
+    private let inlineHourglassScale: CGFloat = 0.78
 
     // Animations (toggleable, persisted). Spinner while resetting; a pulse when %s change.
     private var animationsEnabled = UserDefaults.standard.object(forKey: "animationsEnabled") as? Bool ?? true
@@ -424,7 +438,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 // the time text next to it carries the warn/critical colour, exactly as the
                 // image-slot hourglass did.
                 let ink: NSColor = menuOpen ? .selectedMenuItemTextColor : .labelColor
-                let img = hourglassImage(remaining: hg.remaining, windowHours: hg.windowHours, tint: ink)
+                let img = hourglassImage(remaining: hg.remaining, windowHours: hg.windowHours,
+                                         tint: ink, size: inlineHourglassScale)
                 let att = NSTextAttachment()
                 att.image = img
                 // Centre the glyph on the cap-height box so it sits like a character.
@@ -436,7 +451,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             var attrs: [NSAttributedString.Key: Any] = [.font: font]
             // While the menu is open, let the system color the (highlighted) text.
-            if let c = nsColor(seg.level), !menuOpen { attrs[.foregroundColor] = c }
+            if let c = seg.brand.map(providerColor) ?? nsColor(seg.level), !menuOpen {
+                attrs[.foregroundColor] = c
+            }
             result.append(NSAttributedString(string: seg.text, attributes: attrs))
         }
         button.attributedTitle = result
@@ -576,7 +593,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let end = h.windowEpoch ?? 0                        // session end (reset time)
         return ChartSeries(points: h.points,
                            windowStart: end - sessionWindowSeconds(u), windowEnd: end,
-                           color: p == .claude ? .controlAccentColor : codexColor,
+                           color: providerColor(p),
                            label: p.title)
     }
 

@@ -64,9 +64,8 @@ remaining() {
   fi
   local d=$(( diff/86400 )) h=$(( (diff%86400)/3600 )) m=$(( (diff%3600)/60 ))
   if [[ "$style" == short ]]; then
-    if   (( d > 0 )); then echo "${d}d${h}h"
-    elif (( h > 0 )); then echo "${h}h${m}m"
-    else echo "${m}m"; fi
+    # Clock form (4:53), not 4h53m: the menu bar pays for every character.
+    if (( d > 0 )); then echo "${d}d${h}h"; else printf '%d:%02d\n' "$h" "$m"; fi
   else
     if   (( d > 0 )); then echo "${d}d ${h}h left"
     elif (( h > 0 )); then echo "${h}h ${m}m left"
@@ -111,9 +110,8 @@ remaining_epoch() {
   fi
   d=$(( diff/86400 )); h=$(( (diff%86400)/3600 )); m=$(( (diff%3600)/60 ))
   if [[ "$style" == short ]]; then
-    if   (( d > 0 )); then echo "${d}d${h}h"
-    elif (( h > 0 )); then echo "${h}h${m}m"
-    else echo "${m}m"; fi
+    # Clock form (4:53), not 4h53m: the menu bar pays for every character.
+    if (( d > 0 )); then echo "${d}d${h}h"; else printf '%d:%02d\n' "$h" "$m"; fi
   else
     if   (( d > 0 )); then echo "${d}d ${h}h left"
     elif (( h > 0 )); then echo "${h}h ${m}m left"
